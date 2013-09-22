@@ -2,20 +2,37 @@
 <meta charset="utf8">
 <style>
 
-.link {
-    fill: none;
-    stroke: #000;
-    stroke-opacity: .2;
+body {
+    font-family: sans-serif;
 }
 
+.link, .link[hidden]:hover {
+    /*fill: none;*/
+    fill-opacity: .4;
+    stroke-opacity: .2;
+}
 .link:hover {
+    fill-opacity: .7;
     stroke-opacity: .5;
+}
+.link[hidden] {
+    opacity: 0.2;
 }
 
 .half {
     fill: none;
     stroke: #0f0;
     stroke-width: 1;
+}
+
+.node text {
+    pointer-events: none;
+}
+.node[hidden] {
+    opacity: 0.2;
+}
+.node[hidden] text {
+    display: none;
 }
 
 </style>
@@ -161,17 +178,74 @@ d3.json('melb-flow.json', function (data) {
         });
     }
 
-    var linkPath = function (d, i) {
-        var curvature = 0.5;
+    var curvature = 0.4;
+
+    function curvePoints(x0, y0, x1, y1) {
+        var yi = d3.interpolateNumber(y0, y1);
+        var y2 = yi(curvature);
+        var y3 = yi(1 - curvature);
+        return [x0, y2, x1, y3, x1, y1];
+    }
+
+    function linkPathStroke(d) {
         var x0 = d.sx + d.w / 2;
         var x1 = d.tx + d.w / 2;
         var y0 = d.source.y + d.source.h;
         var y1 = d.target.y;
-        var yi = d3.interpolateNumber(y0, y1);
-        var y2 = yi(curvature);
-        var y3 = yi(1 - curvature);
         return 'M' + x0 + ',' + y0 +
-            'C' + [x0, y2, x1, y3, x1, y1].join(',');
+            'C' + curvePoints(x0, y0, x1, y1).join(',');
+    }
+
+    function linkPathFill(d) {
+        var sy = d.source.y + d.source.h;
+        var ty = d.target.y;
+        var curve1 = curvePoints(d.sx, sy, d.tx, ty);
+        var curve2 = curvePoints(d.tx + d.w, ty, d.sx + d.w, sy);
+        return 'M' + d.sx + ',' + sy +
+            'C' + curve1.join(',') +
+            'L' + (d.tx + d.w) + ',' + ty +
+            'C' + curve2.join(',') +
+            'Z';
+    }
+
+    var isHighlightLocked = false;
+    var doc = d3.select(document);
+
+    function lockHighlight() {
+        if (!isHighlightLocked) {
+            isHighlightLocked = true;
+            setTimeout(function () {
+                doc.on('click', unlockHighlight);
+            }, 0);
+        }
+    }
+
+    function unlockHighlight() {
+        if (isHighlightLocked) {
+            isHighlightLocked = false;
+            doc.on('click', null);
+            clearHighlight();
+        }
+    }
+
+    function highlightParty(p) {
+        if (!isHighlightLocked) {
+            var party = p.data.Party;
+            node.filter(function (d) {
+                return d.data.Party != party;
+            }).attr('hidden', true);
+
+            link.filter(function (d) {
+                return d.source.data.Party != party && d.target.data.Party != party;
+            }).attr('hidden', true);
+        }
+    }
+
+    function clearHighlight() {
+        if (!isHighlightLocked) {
+            node.attr('hidden', null);
+            link.attr('hidden', null);
+        }
     }
 
     svg.append('rect')
@@ -185,14 +259,20 @@ d3.json('melb-flow.json', function (data) {
             .data(dop.links)
         .enter().append('path')
             .attr('class', 'link')
-            .attr('d', linkPath)
-            .style('stroke-width', function (d) { return d.w; });
+            // .attr('d', linkPathStroke)
+            .attr('d', linkPathFill)
+            // .style('stroke', function (d) { return d.source.colour; })
+            // .style('stroke-width', function (d) { return d.w; });
+            .style('fill', function (d) { return d.source.colour; })
 
     var node = svg.append('g').selectAll('.node')
             .data(dop.nodes)
         .enter().append('g')
             .attr('class', 'node')
-            .attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; });
+            .attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; })
+            .on('mouseover', highlightParty)
+            .on('mouseout', clearHighlight)
+            .on('click', lockHighlight)
 
     node.append('rect')
             .attr('height', dop.nodeHeight)
@@ -203,11 +283,11 @@ d3.json('melb-flow.json', function (data) {
             .text(function (d) { return d.data.Party + ' ' + d.votes; });
 
     var totalVotes = d3.sum(data.flow[0].votes);
-    node.append('text')
-        .attr('x', function (d) { return d.w * .6; })
+    var text = node.append('text')
+        .attr('x', function (d) { return d.w / 2; })
         .attr('y', function (d) { return d.h / 2; })
         .attr('dy', '.35em')
-        .attr('text-anchor', 'end')
+        .attr('text-anchor', 'middle')
         .attr('transform', null)
         .text(function (d) { return d.data.Party + ' ' + (d.votes / totalVotes * 100).toFixed(2) + '%'; })
 
