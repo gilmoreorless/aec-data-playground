@@ -1,0 +1,19 @@
+{
+  "candidates": [
+    {"Surname": "PEARSON", "GivenNm": "Georgia", "Party": "FFP", "colour": "#cce6f1"},
+    {"Surname": "BANDT", "GivenNm": "Adam", "Party": "GRN", "colour": "#dee7be"},
+    {"Surname": "MURRAY", "GivenNm": "Joel", "Party": "ASXP", "colour": "#9ff"},
+    {"Surname": "COLLYER", "GivenNm": "David", "Party": "DEM", "colour": "#ddd"},
+    {"Surname": "GREEN", "GivenNm": "Penelope", "Party": "SPA", "colour": "#99cc99"},
+    {"Surname": "BOWTELL", "GivenNm": "Cath", "Party": "ALP", "colour": "#e7caca"},
+    {"Surname": "OLSEN", "GivenNm": "Simon", "Party": "LP", "colour": "#cad6e7"}
+  ],
+  "flow": [
+    {"eliminated": -1, "votes": [1389, 32308, 1633, 602, 613, 34022, 18760]},
+    {"eliminated": 3, "votes": [56, 173, 106, 0, 58, 112, 97]},
+    {"eliminated": 4, "votes": [77, 195, 177, 0, 0, 153, 69]},
+    {"eliminated": 0, "votes": [0, 695, 204, 0, 0, 260, 363]},
+    {"eliminated": 2, "votes": [0, 1293, 0, 0, 0, 435, 392]},
+    {"eliminated": 6, "votes": [0, 15395, 0, 0, 0, 4286, 0]}
+  ]
+}

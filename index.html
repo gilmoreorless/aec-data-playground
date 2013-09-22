@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<meta charset="utf8">
+<style>
+
+.link {
+    fill: none;
+    stroke: #000;
+    stroke-opacity: .2;
+}
+
+.link:hover {
+    stroke-opacity: .5;
+}
+
+.half {
+    fill: none;
+    stroke: #0f0;
+    stroke-width: 1;
+}
+
+</style>
+<body>
+<script src="d3.js"></script>
+<script>
+
+var width = 700,
+    height = 1800;
+
+var colour = d3.scale.category20();
+
+var svg = d3.select('body').append('svg')
+    .attr('width', width)
+    .attr('height', height)
+
+d3.json('melb-flow.json', function (data) {
+
+    var dop = window.dop = {
+        size: [width, height],
+        nodeHeight: 20,
+        candidates: data.candidates,
+        flow: data.flow,
+        nodes: [],
+        links: []
+    };
+    calculateNodesLinks();
+
+    function snap(n) {
+        return Math.round(n + 0.5) - 0.5;
+    }
+
+    function mid(node) {
+        return node.x + node.w / 2;
+    }
+
+    function normalise(votes) {
+        // return Math.sqrt(votes);
+        // return Math.log(votes);
+        return votes;
+    }
+
+    function calculateNodesLinks() {
+        var candidates = dop.candidates, flow = dop.flow, nodes = dop.nodes, links = dop.links;
+        var eliminated = d3.set();
+        var nodeGroups = [];
+        var prevNodes;
+        var id = 0;
+
+        // Go through each round of preferences and build nodes/links for remaining candidates
+        flow.forEach(function (round, ri) {
+            var fromIndex = round.eliminated;
+            var curNodes = d3.map();
+            eliminated.add(fromIndex);
+
+            // Go through each remaining candidate and distribute votes from the eliminated candidate
+            // Eliminated ID of -1 indicates first preferences (all candidates still valid)
+            round.votes.forEach(function (votes, ci) {
+                if (eliminated.has(ci)) {
+                    return;
+                }
+                var node = {
+                    id: id++,
+                    ic: ci,
+                    ix: ci,
+                    iy: ri,
+                    votes: votes,
+                    data: candidates[ci],
+                    sourceLinks: [],
+                    targetLinks: []
+                };
+                // If not first preferences, build flow links
+                if (fromIndex > -1) {
+                    var prevNode = prevNodes.get(ci);
+                    node.votes += prevNode.votes;
+
+                    var distLink = {
+                        source: prevNodes.get(fromIndex),
+                        target: node,
+                        votes: votes,
+                        value: normalise(votes)
+                    };
+                    var sameLink = {
+                        source: prevNode,
+                        target: node,
+                        votes: prevNode.votes,
+                        value: normalise(prevNode.votes)
+                    };
+                    links.push(distLink, sameLink);
+                    node.targetLinks.push(distLink, sameLink);
+                    prevNodes.get(fromIndex).sourceLinks.push(distLink);
+                    prevNode.sourceLinks.push(sameLink);
+                }
+                node.value = normalise(node.votes);
+                curNodes.set(ci, node);
+            });
+            prevNodes = curNodes;
+            nodeGroups.push(curNodes.values());
+        });
+        links.reverse();
+
+        var totalValue = d3.sum(nodeGroups[0], function (d) {
+            return d.value;
+        });
+        var kx = dop.size[0] / totalValue;
+        var ky = (dop.size[1] - dop.nodeHeight - 1) / (nodeGroups.length - 1);
+        // Sort each row of nodes and work out size/positioning
+        nodeGroups.forEach(function (group) {
+            group.sort(function (a, b) {
+                return b.value - a.value;
+            });
+            var x = 0;
+            group.forEach(function (node, i) {
+                node.ix = i;
+                node.x = x;
+                node.y = snap(node.iy * ky);
+                node.w = node.value * kx;
+                node.h = dop.nodeHeight;
+                node.colour = node.data.colour || (node.data.colour = colour(i));
+                x += node.w;
+            });
+        });
+        nodes = Array.prototype.concat.apply([], nodeGroups);
+        dop.nodes = nodes;
+
+        // Work out size/positioning of links
+        nodes.forEach(function (node) {
+            var nx = node.x;
+            node.sourceLinks.sort(function (a, b) {
+                return a.target.ix - b.target.ix;
+            }).forEach(function (link) {
+                link.w = link.value * kx;
+                link.sx = nx;
+                // Same candidate links
+                if (link.source.ic == link.target.ic) {
+                    link.tx = link.target.x;
+                // Flow from one candidate to another
+                } else {
+                    link.tx = link.target.x + link.target.w - link.w;
+                }
+                nx += link.w;
+            });
+        });
+    }
+
+    var linkPath = function (d, i) {
+        var curvature = 0.5;
+        var x0 = d.sx + d.w / 2;
+        var x1 = d.tx + d.w / 2;
+        var y0 = d.source.y + d.source.h;
+        var y1 = d.target.y;
+        var yi = d3.interpolateNumber(y0, y1);
+        var y2 = yi(curvature);
+        var y3 = yi(1 - curvature);
+        return 'M' + x0 + ',' + y0 +
+            'C' + [x0, y2, x1, y3, x1, y1].join(',');
+    }
+
+    svg.append('rect')
+        .attr('class', 'half')
+        .attr('width', snap(dop.size[0] / 2))
+        .attr('height', dop.size[1])
+        .attr('transform', 'translate(0.5,0)')
+        .attr('stroke-dasharray', '5,10');
+
+    var link = svg.append('g').selectAll('.link')
+            .data(dop.links)
+        .enter().append('path')
+            .attr('class', 'link')
+            .attr('d', linkPath)
+            .style('stroke-width', function (d) { return d.w; });
+
+    var node = svg.append('g').selectAll('.node')
+            .data(dop.nodes)
+        .enter().append('g')
+            .attr('class', 'node')
+            .attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; });
+
+    node.append('rect')
+            .attr('height', dop.nodeHeight)
+            .attr('width', function (d) { return d.w; })
+            .style('fill', function (d) { return d.colour; })
+            .style('stroke', function (d) { return d3.rgb(d.colour).darker(2); })
+        .append('title')
+            .text(function (d) { return d.data.Party + ' ' + d.votes; });
+
+    var totalVotes = d3.sum(data.flow[0].votes);
+    node.append('text')
+        .attr('x', function (d) { return d.w * .6; })
+        .attr('y', function (d) { return d.h / 2; })
+        .attr('dy', '.35em')
+        .attr('text-anchor', 'end')
+        .attr('transform', null)
+        .text(function (d) { return d.data.Party + ' ' + (d.votes / totalVotes * 100).toFixed(2) + '%'; })
+
+});
+
+</script>
+<script>document.write('<script src="http://' + (location.host || 'localhost').split(':')[0] + ':35729/livereload.js?snipver=1"></' + 'script>')</script>
