@@ -9,7 +9,7 @@ body {
 .link, .link[hidden]:hover {
     /*fill: none;*/
     fill-opacity: .4;
-    stroke-opacity: .2;
+    stroke-opacity: .3;
 }
 .link:hover {
     fill-opacity: .7;
@@ -187,15 +187,6 @@ d3.json('melb-flow.json', function (data) {
         return [x0, y2, x1, y3, x1, y1];
     }
 
-    function linkPathStroke(d) {
-        var x0 = d.sx + d.w / 2;
-        var x1 = d.tx + d.w / 2;
-        var y0 = d.source.y + d.source.h;
-        var y1 = d.target.y;
-        return 'M' + x0 + ',' + y0 +
-            'C' + curvePoints(x0, y0, x1, y1).join(',');
-    }
-
     function linkPathFill(d) {
         var sy = d.source.y + d.source.h;
         var ty = d.target.y;
@@ -248,10 +239,12 @@ d3.json('melb-flow.json', function (data) {
         }
     }
 
-    svg.append('rect')
+    svg.append('line')
         .attr('class', 'half')
-        .attr('width', snap(dop.size[0] / 2))
-        .attr('height', dop.size[1])
+        .attr('x1', snap(dop.size[0] / 2))
+        .attr('x2', snap(dop.size[0] / 2))
+        .attr('y1', 0)
+        .attr('y2', dop.size[1])
         .attr('transform', 'translate(0.5,0)')
         .attr('stroke-dasharray', '5,10');
 
@@ -259,10 +252,8 @@ d3.json('melb-flow.json', function (data) {
             .data(dop.links)
         .enter().append('path')
             .attr('class', 'link')
-            // .attr('d', linkPathStroke)
             .attr('d', linkPathFill)
-            // .style('stroke', function (d) { return d.source.colour; })
-            // .style('stroke-width', function (d) { return d.w; });
+            .style('stroke', function (d) { return d3.rgb(d.source.colour).darker(2); })
             .style('fill', function (d) { return d.source.colour; })
 
     var node = svg.append('g').selectAll('.node')
