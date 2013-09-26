@@ -6,6 +6,13 @@ body {
     font-family: sans-serif;
 }
 
+#controls {
+    padding: 10px 0 20px 0;
+}
+#controls input {
+    margin-left: 20px;
+}
+
 .link, .link[hidden]:hover {
     /*fill: none;*/
     fill-opacity: .4;
@@ -37,6 +44,11 @@ body {
 
 </style>
 <body>
+<div id="controls">
+    Display mode:
+    <label><input type="radio" name="displayType" value="indicative"> Indicative (not to scale)</label>
+    <label><input type="radio" name="displayType" value="proportional" checked> Proportional (to scale)</label>
+</div>
 <script src="../d3.js"></script>
 <script>
 
@@ -45,19 +57,29 @@ var width = 700,
 
 var colour = d3.scale.category20();
 
+var dop;
 var svg = d3.select('body').append('svg')
     .attr('width', width)
     .attr('height', height)
 
+document.getElementById('controls').addEventListener('click', function (e) {
+    if (e.target.nodeName != 'INPUT' || e.target.name != 'displayType') {
+        return;
+    }
+    dop.mode = e.target.value;
+    dop.redraw();
+}, false);
+
 d3.json('melb-flow.json', function (data) {
 
-    var dop = window.dop = {
+    dop = {
         size: [width, height],
         nodeHeight: 20,
         candidates: data.candidates,
         flow: data.flow,
         nodes: [],
-        links: []
+        links: [],
+        mode: 'proportional'
     };
     calculateNodesLinks();
 
@@ -81,6 +103,9 @@ d3.json('melb-flow.json', function (data) {
         var nodeGroups = [];
         var prevNodes;
         var id = 0;
+        var blockPadding = 2;
+
+        var isIndicativeMode = dop.mode === 'indicative';
 
         // Go through each round of preferences and build nodes/links for remaining candidates
         flow.forEach(function (round, ri) {
@@ -125,6 +150,7 @@ d3.json('melb-flow.json', function (data) {
                     node.targetLinks.push(distLink, sameLink);
                     prevNodes.get(fromIndex).sourceLinks.push(distLink);
                     prevNode.sourceLinks.push(sameLink);
+                    node.prevNode = prevNode;
                 }
                 node.value = normalise(node.votes);
                 curNodes.set(ci, node);
@@ -137,13 +163,23 @@ d3.json('melb-flow.json', function (data) {
         var totalValue = d3.sum(nodeGroups[0], function (d) {
             return d.value;
         });
-        var kx = dop.size[0] / totalValue;
         var ky = (dop.size[1] - dop.nodeHeight - 1) / (nodeGroups.length - 1);
+        var kx = dop.size[0] / totalValue;
         // Sort each row of nodes and work out size/positioning
         nodeGroups.forEach(function (group) {
             group.sort(function (a, b) {
                 return b.value - a.value;
             });
+            if (isIndicativeMode) {
+                var totalBlocks = group.reduce(function (memo, node, i) {
+                    return memo + (i + 1);
+                }, 0);
+                totalBlocks += blockPadding * group.length;
+                group.forEach(function (node, i) {
+                    node.blockValue = group.length - i + blockPadding;
+                    node.value = (node.blockValue / totalBlocks) * totalValue;
+                });
+            }
             var x = 0;
             group.forEach(function (node, i) {
                 node.ix = i;
@@ -164,14 +200,21 @@ d3.json('melb-flow.json', function (data) {
             node.sourceLinks.sort(function (a, b) {
                 return a.target.ix - b.target.ix;
             }).forEach(function (link) {
+                var tn = link.target;
+                if (isIndicativeMode) {
+                    link.value = (link.votes / node.votes) * node.value;
+                }
                 link.w = link.value * kx;
                 link.sx = nx;
                 // Same candidate links
-                if (link.source.ic == link.target.ic) {
-                    link.tx = link.target.x;
+                if (link.source.ic == tn.ic) {
+                    link.tx = tn.x;
                 // Flow from one candidate to another
                 } else {
-                    link.tx = link.target.x + link.target.w - link.w;
+                    if (isIndicativeMode) {
+                        link.tw = (tn.value - tn.prevNode.value) / tn.value * tn.w;
+                    }
+                    link.tx = tn.x + tn.w - (link.tw || link.w);
                 }
                 nx += link.w;
             });
@@ -191,10 +234,10 @@ d3.json('melb-flow.json', function (data) {
         var sy = d.source.y + d.source.h;
         var ty = d.target.y;
         var curve1 = curvePoints(d.sx, sy, d.tx, ty);
-        var curve2 = curvePoints(d.tx + d.w, ty, d.sx + d.w, sy);
+        var curve2 = curvePoints(d.tx + (d.tw || d.w), ty, d.sx + d.w, sy);
         return 'M' + d.sx + ',' + sy +
             'C' + curve1.join(',') +
-            'L' + (d.tx + d.w) + ',' + ty +
+            'L' + (d.tx + (d.tw || d.w)) + ',' + ty +
             'C' + curve2.join(',') +
             'Z';
     }
@@ -265,13 +308,13 @@ d3.json('melb-flow.json', function (data) {
             .on('mouseout', clearHighlight)
             .on('click', lockHighlight)
 
-    node.append('rect')
-            .attr('height', dop.nodeHeight)
-            .attr('width', function (d) { return d.w; })
-            .style('fill', function (d) { return d.colour; })
-            .style('stroke', function (d) { return d3.rgb(d.colour).darker(2); })
-        .append('title')
-            .text(function (d) { return d.data.Party + ' ' + d.votes; });
+    var rect = node.append('rect')
+        .attr('height', dop.nodeHeight)
+        .attr('width', function (d) { return d.w; })
+        .style('fill', function (d) { return d.colour; })
+        .style('stroke', function (d) { return d3.rgb(d.colour).darker(2); })
+    rect.append('title')
+        .text(function (d) { return d.data.Party + ' ' + d.votes; });
 
     var totalVotes = d3.sum(data.flow[0].votes);
     var text = node.append('text')
@@ -282,6 +325,24 @@ d3.json('melb-flow.json', function (data) {
         .attr('transform', null)
         .text(function (d) { return d.data.Party + ' ' + (d.votes / totalVotes * 100).toFixed(2) + '%'; })
 
+
+    dop.redraw = function () {
+        calculateNodesLinks();
+        link.data(dop.links)
+            .transition()
+                .attr('d', linkPathFill);
+        node.data(dop.nodes)
+            .transition()
+                .attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; })
+        rect.data(dop.nodes)
+            .transition()
+                .attr('width', function (d) { return d.w; });
+        node.selectAll('text')
+            .data(dop.nodes)
+            .transition()
+                .attr('x', function (d) { return d.w / 2; })
+                .attr('text-anchor', 'middle')
+    };
 });
 
 </script>
