@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
-<title>Sankey Diagram</title>
+<title>Sankey Diagram (default)</title>
 <style>
 
 #chart {
@@ -57,7 +57,7 @@ var sankey = d3.sankey()
 
 var path = sankey.link();
 
-d3.json("sankey.json", function(energy) {
+d3.json("02-sankey-default.json", function(energy) {
 
   sankey
       .nodes(energy.nodes)
