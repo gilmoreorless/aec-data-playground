@@ -51,6 +51,7 @@ body {
     <label><input type="radio" name="displayType" value="proportional" checked> Proportional (to scale)</label>
 </div>
 <script src="../d3.js"></script>
+<script src="dop-utils.js"></script>
 <script>
 
 var width = 700,
@@ -92,85 +93,20 @@ d3.json('melb-flow.json', function (data) {
         return node.x + node.w / 2;
     }
 
-    function normalise(votes) {
-        // return Math.sqrt(votes);
-        // return Math.log(votes);
-        return votes;
-    }
-
     function calculateNodesLinks() {
-        var candidates = dop.candidates, flow = dop.flow, nodes = dop.nodes, links = dop.links;
-        var eliminated = d3.set();
-        var nodeGroups = [];
-        var prevNodes;
-        var id = 0;
-        var blockPadding = 2;
+        var objects = dopUtils.buildNodesAndLinks(data);
+        var nodes = objects.nodes;
+        var nodeGroups = objects.nodeGroups;
+        var links = objects.links;
+        var totalValue = objects.totalVotes;
 
+        var blockPadding = 2;
         var isIndicativeMode = dop.mode === 'indicative';
 
-        // Go through each round of preferences and build nodes/links for remaining candidates
-        flow.forEach(function (round, ri) {
-            var fromIndex = round.eliminated;
-            var curNodes = d3.map();
-            eliminated.add(fromIndex);
-
-            // Go through each remaining candidate and distribute votes from the eliminated candidate
-            // Eliminated ID of -1 indicates first preferences (all candidates still valid)
-            round.votes.forEach(function (votes, ci) {
-                if (eliminated.has(ci)) {
-                    return;
-                }
-                var node = {
-                    id: id++,
-                    ic: ci,
-                    ix: ci,
-                    iy: ri,
-                    votes: votes,
-                    data: candidates[ci],
-                    sourceLinks: [],
-                    targetLinks: []
-                };
-                // If not first preferences, build flow links
-                if (fromIndex > -1) {
-                    var prevNode = prevNodes.get(ci);
-                    node.votes += prevNode.votes;
-
-                    var distLink = {
-                        source: prevNodes.get(fromIndex),
-                        target: node,
-                        votes: votes,
-                        value: normalise(votes)
-                    };
-                    var sameLink = {
-                        source: prevNode,
-                        target: node,
-                        votes: prevNode.votes,
-                        value: normalise(prevNode.votes)
-                    };
-                    links.push(distLink, sameLink);
-                    node.targetLinks.push(distLink, sameLink);
-                    prevNodes.get(fromIndex).sourceLinks.push(distLink);
-                    prevNode.sourceLinks.push(sameLink);
-                    node.prevNode = prevNode;
-                }
-                node.value = normalise(node.votes);
-                curNodes.set(ci, node);
-            });
-            prevNodes = curNodes;
-            nodeGroups.push(curNodes.values());
-        });
-        links.reverse();
-
-        var totalValue = d3.sum(nodeGroups[0], function (d) {
-            return d.value;
-        });
         var ky = (dop.size[1] - dop.nodeHeight - 1) / (nodeGroups.length - 1);
         var kx = dop.size[0] / totalValue;
-        // Sort each row of nodes and work out size/positioning
-        nodeGroups.forEach(function (group) {
-            group.sort(function (a, b) {
-                return b.value - a.value;
-            });
+        // Work out size/positioning for each row of nodes
+        nodeGroups.forEach(function (group, rowIdx) {
             if (isIndicativeMode) {
                 var totalBlocks = group.reduce(function (memo, node, i) {
                     return memo + (i + 1);
@@ -185,14 +121,13 @@ d3.json('melb-flow.json', function (data) {
             group.forEach(function (node, i) {
                 node.ix = i;
                 node.x = x;
-                node.y = snap(node.iy * ky);
+                node.y = snap(rowIdx * ky);
                 node.w = node.value * kx;
                 node.h = dop.nodeHeight;
                 node.colour = node.data.colour || (node.data.colour = colour(i));
                 x += node.w;
             });
         });
-        nodes = Array.prototype.concat.apply([], nodeGroups);
         dop.nodes = nodes;
 
         // Work out size/positioning of links
@@ -204,11 +139,13 @@ d3.json('melb-flow.json', function (data) {
                 var tn = link.target;
                 if (isIndicativeMode) {
                     link.value = (link.votes / node.votes) * node.value;
+                } else {
+                    link.value = link.votes;
                 }
                 link.w = link.value * kx;
                 link.sx = nx;
                 // Same candidate links
-                if (link.source.ic == tn.ic) {
+                if (link.source.candidateIndex == tn.candidateIndex) {
                     link.tx = tn.x;
                 // Flow from one candidate to another
                 } else {
@@ -220,6 +157,7 @@ d3.json('melb-flow.json', function (data) {
                 nx += link.w;
             });
         });
+        dop.links = links;
     }
 
     var curvature = 0.4;
