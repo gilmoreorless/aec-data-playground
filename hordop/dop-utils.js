@@ -70,6 +70,11 @@ dopUtils.buildNodesAndLinks = function (dopData) {
     });
     nodes = Array.prototype.concat.apply(nodes, nodeGroups);
 
+    // Add a percentage to all nodes
+    nodes.forEach(function (node) {
+        node.votePercentage = node.votes / totalVotes * 100;
+    });
+
     // Return all calculated objects
     return {
         nodes: nodes,

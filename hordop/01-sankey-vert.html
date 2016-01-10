@@ -262,7 +262,7 @@ d3.json('melb-flow.json', function (data) {
         .attr('dy', '.35em')
         .attr('text-anchor', 'middle')
         .attr('transform', null)
-        .text(function (d) { return d.data.Party + ' ' + (d.votes / totalVotes * 100).toFixed(2) + '%'; })
+        .text(function (d) { return d.data.Party + ' ' + d.votePercentage.toFixed(2) + '%'; })
 
 
     dop.redraw = function () {

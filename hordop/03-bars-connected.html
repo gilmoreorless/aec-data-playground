@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<meta charset="utf8">
+<title>Bar charts &ndash; connected</title>
+<style>
+
+body {
+    font-family: sans-serif;
+}
+
+.round-border {
+    fill: none;
+    stroke: #ddd;
+    stroke-dasharray: 2 1;
+}
+.required-votes-marker {
+    fill: none;
+    stroke: #666;
+    stroke-width: 1;
+    stroke-dasharray: 3;
+}
+.candidate-bar {
+    stroke: #333;
+    stroke-width: 0.5;
+}
+.candidate-label {
+    font-size: .875em;
+}
+.distribution {
+    fill: none;
+    stroke-width: 3;
+}
+
+</style>
+<body>
+<script src="../d3.js"></script>
+<script src="dop-utils.js"></script>
+<script>
+
+// Editable config values
+var chartBarMaxWidth = 600;
+var chartBarHeight = 25;
+var chartTopMargin = 30;
+var chartLeftOffset = 80;
+var chartTextPadding = 6;
+
+// Other config - updated dynamically after data is loaded
+var widthPerVote = 0;
+var requiredVotes = 0;
+
+
+// Utilities
+
+var svg = d3.select('body').append('svg');
+
+function snap(num) {
+    if (Array.isArray(num)) {
+        return num.map(snap);
+    }
+    if (!isNaN(num)) {
+        return Math.round(num);
+    }
+    return num;
+}
+
+// Half-pixel hack
+var root = svg.append('g').attr('transform', 'translate(0.5, 0.5)')
+
+var colour = d3.scale.category20();
+
+var dopConnection = function (fromChart, toChart) {
+    var startX = fromChart.dims.x + fromChart.lastCandidateWidth;
+    var startY = fromChart.dims.y + fromChart.dims.height - chartBarHeight / 2;
+    var endX = toChart.dims.x;
+    var endY = toChart.dims.y + toChart.dims.height / 2;
+    var midX1 = startX + (endX - startX) / 3;
+    var midX2 = midX1 + (endX - startX) / 3;
+
+    var connection = {};
+
+    var fromNode = fromChart.nodes[fromChart.nodes.length - 1];
+    var pathRoot = root.append('g');
+
+    var line = d3.svg.line()
+        .x(d => snap(d[0]))
+        .y(d => snap(d[1]))
+        .interpolate('basis')
+
+    var mainPath = pathRoot.append('path')
+        .attr('class', 'distribution distribution-main')
+        .attr('d', line([
+            [startX, startY],
+            [midX1, startY],
+            [midX1, endY],
+            [midX2, endY]
+        ]))
+        .style('stroke', fromNode.data.colour)
+
+    var splitPaths = pathRoot.selectAll('.distribution-split')
+        .data(fromNode.sourceLinks)
+    .enter().append('path')
+        .attr('class', 'distribution distribution-split')
+        .attr('d', function (d, i) {
+            var nodeY = toChart.dims.y + chartBarHeight * i + chartBarHeight / 2;
+            return line([
+                [midX2, endY],
+                [midX2, nodeY],
+                [endX, nodeY]
+            ]);
+        })
+        .style('stroke', fromNode.data.colour)
+
+    connection.paths = {
+        main: mainPath,
+        split: splitPaths
+    };
+
+    return connection;
+};
+
+var dopRoundChart = function (nodes) {
+    var maxVotes = d3.max(nodes, d => d.votes);
+    var halfway = snap(widthPerVote * requiredVotes);
+    var totalHeight = chartBarHeight * nodes.length;
+
+    var chart = {
+        nodes: nodes,
+        maxVotes: maxVotes,
+        maxCandidateWidth: nodes.length ? widthPerVote * nodes[0].votes : 0,
+        lastCandidateWidth: nodes.length ? widthPerVote * nodes[nodes.length - 1].votes : 0,
+        distribution: null,
+        dims: {
+            width: chartBarMaxWidth,
+            height: totalHeight,
+            x: 0,
+            y: 0
+        }
+    };
+
+    var container = root.append('g').attr('class', 'round-chart');
+
+    chart.container = container;
+    chart.position = function (x, y) {
+        x = snap(x);
+        y = snap(y);
+        chart.dims.x = x;
+        chart.dims.y = y;
+        container.attr('transform', 'translate(' + x + ',' + y + ')');
+        return chart;
+    };
+
+    chart.connect = function (otherChart) {
+        chart.distribution = dopConnection(chart, otherChart);
+        // Re-align the last text label to avoid the connection line
+        var lastLabel = chart.container.select('.candidate:last-child .candidate-label');
+        if (lastLabel.datum().isLabelOutside) {
+            var connDims = chart.distribution.paths.main.node().getBBox();
+            lastLabel.attr('dx', connDims.width / 2 - chartTextPadding);
+        }
+    };
+
+
+    // Bounding area
+    container.append('rect')
+        .attr('class', 'round-border')
+        .attr('x', 0)
+        .attr('y', 0)
+        .attr('width', chartBarMaxWidth)
+        .attr('height', totalHeight)
+
+    // 50% line
+    container.append('line')
+        .attr('class', 'required-votes-marker')
+        .attr('x1', halfway)
+        .attr('x2', halfway)
+        .attr('y1', -5)
+        .attr('y2', totalHeight + 10)
+
+
+    // Bars for each candidate
+    var candidates = container.selectAll('.candidate')
+        .data(nodes)
+    .enter().append('g')
+        .attr('class', 'candidate')
+        .attr('transform', function (d, i) { return 'translate(0,' + (i * chartBarHeight) + ')'; })
+
+    var bar = candidates.append('rect')
+        .attr('class', 'candidate-bar')
+        .style('fill', d => d.data.colour)
+        .attr('x', 0)
+        .attr('y', 0)
+        .attr('width', d => snap(widthPerVote * d.votes))
+        .attr('height', chartBarHeight)
+    bar.append('title')
+        .text(d => d.data.Party + ' ' + d.votes);
+
+    // Text labels
+    candidates.append('text')
+        .attr('class', 'candidate-label')
+        .text(d => d.data.Party + ' ' + d.votePercentage.toFixed(2) + '%')
+        .attr('y', snap(chartBarHeight / 2))
+        .attr('dy', '.35em')
+        .attr('x', function (d) {
+            // If the text doesn't fit, put it outside the bar
+            var textSize = this.getComputedTextLength();
+            var paddedSize = textSize + chartTextPadding * 2;
+            var barWidth = widthPerVote * d.votes;
+            if (paddedSize > barWidth) {
+                d.isLabelOutside = true;
+                return barWidth + chartTextPadding;
+            }
+            d.isLabelOutside = false;
+            return chartTextPadding;
+        })
+
+    return chart;
+};
+
+
+d3.json('melb-flow.json', function (data) {
+    var objects = dopUtils.buildNodesAndLinks(data);
+    var nodes = objects.nodes;
+    var nodeGroups = objects.nodeGroups;
+    var links = objects.links;
+    var totalVotes = objects.totalVotes;
+
+    widthPerVote = chartBarMaxWidth / totalVotes;
+    requiredVotes = Math.floor(totalVotes / 2) + 1;
+
+//     dopRoundChart(nodeGroups[0]).position(0, 20);
+    var charts = nodeGroups.map(function (group) {
+        return dopRoundChart(group);
+    });
+    var xPos = 0;
+    var yPos = 20;
+    var prevChart;
+    charts.forEach(function (chart) {
+        chart.position(xPos, yPos);
+        if (prevChart) {
+            prevChart.connect(chart);
+        }
+        xPos += chart.lastCandidateWidth + chartLeftOffset;
+        yPos += chart.dims.height + chartTopMargin;
+        prevChart = chart;
+    });
+    svg.attr('width', Math.round(prevChart.dims.x + prevChart.dims.width + chartLeftOffset))
+        .attr('height', yPos);
+});
+
+</script>
