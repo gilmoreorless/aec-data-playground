@@ -173,6 +173,16 @@ var dopConnection = function (fromChart, toChart) {
         paths: {main: null, split: null}
     };
 
+    // Clean up any paths created by a connection
+    connection.remove = function () {
+        var p = connection.paths;
+        for (var key in p) {
+            if (p.hasOwnProperty(key) && p[key] && p[key].remove) {
+                p[key].remove();
+            }
+        }
+    };
+
     var fromNode = fromChart.nodes[fromChart.nodes.length - 1];
     fromNode.sourceLinks.sort(function (a, b) {
         return b.target.votes - a.target.votes;
@@ -387,24 +397,37 @@ d3.json('melb-flow.json', function (data) {
     var charts = dop.nodeGroups.map(function (group) {
         return dopRoundChart(group);
     });
+    dop.charts = charts;
     var xPos = 0;
     var yPos = 20;
-    var prevChart;
     charts.forEach(function (chart) {
         chart.position(xPos, yPos);
-        if (prevChart) {
-            prevChart.connect(chart);
-        }
         xPos += chart.lastCandidateWidth + chartLeftOffset;
         yPos += chart.dims.height + chartTopMargin;
         prevChart = chart;
     });
+    connectCharts();
     svg.attr('width', Math.round(prevChart.dims.x + prevChart.dims.width + chartLeftOffset))
         .attr('height', yPos);
+
+    function connectCharts() {
+        var prevChart;
+        charts.forEach(function (chart) {
+            if (chart.distribution) {
+                chart.distribution.remove();
+                chart.distribution = null;
+            }
+            if (prevChart) {
+                prevChart.connect(chart);
+            }
+            prevChart = chart;
+        });
+    }
 
     // Define main drawing method
     dop.draw = function () {
         console.log('REDRAW!');
+        connectCharts();
     }
 });
 
