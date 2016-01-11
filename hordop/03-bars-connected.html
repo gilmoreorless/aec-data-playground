@@ -6,6 +6,12 @@
 body {
     font-family: sans-serif;
 }
+label {
+    margin-left: .5em;
+}
+label[aria-disabled="true"] {
+    opacity: .5;
+}
 
 .round-border {
     fill: none;
@@ -29,12 +35,29 @@ body {
     fill: none;
     stroke-width: 3;
 }
+.distribution-proportional {
+    stroke: none;
+}
 
 </style>
 <body>
+<div id="controls">
+    <div class="option">
+        Link type:
+        <label><input type="radio" name="linkType" value="simple" checked> Simple connector</label>
+        <label><input type="radio" name="linkType" value="proportional"> Proportional to vote distribution</label>
+    </div>
+    <div class="option">
+        Bar type:
+        <label><input type="radio" name="barType" value="single" checked> Single bar per candidate</label>
+        <label aria-disabled="true"><input type="radio" name="barType" value="splitSource" disabled> Split into vote sources</label>
+    </div>
+</div>
 <script src="../d3.js"></script>
 <script src="dop-utils.js"></script>
 <script>
+
+/*** CONFIG ***/
 
 // Editable config values
 var chartBarMaxWidth = 600;
@@ -48,9 +71,51 @@ var widthPerVote = 0;
 var requiredVotes = 0;
 
 
-// Utilities
+/*** SETUP ***/
 
+// Root object
+var dop = {
+    linkType: '',
+    barType: '',
+    nodes: [],
+    nodeGroups: [],
+    links: [],
+    totalVotes: 0,
+    draw: function () {}
+};
+// Base container
 var svg = d3.select('body').append('svg');
+// Half-pixel hack
+var root = svg.append('g').attr('transform', 'translate(0.5, 0.5)');
+// Re-usable definitions
+var defs = svg.append('defs');
+
+
+/*** CONTROLS ***/
+
+var controlsRoot = document.getElementById('controls');
+controlsRoot.addEventListener('click', function (e) {
+    if (e.target.nodeName != 'INPUT' || e.target.type != 'radio') {
+        return;
+    }
+    var oldValue = dop[e.target.name];
+    var newValue = e.target.value
+    dop[e.target.name] = newValue;
+    if (newValue !== oldValue) {
+        dop.draw();
+    }
+}, false);
+
+// Set initial option values based on checked inputs
+Array.prototype.forEach.call(controlsRoot.querySelectorAll('.option'), function (optionContainer) {
+    var checked = optionContainer.querySelector('input:checked');
+    if (checked) {
+        dop[checked.name] = checked.value;
+    }
+});
+
+
+/*** UTILITIES ***/
 
 function snap(num) {
     if (Array.isArray(num)) {
@@ -62,22 +127,57 @@ function snap(num) {
     return num;
 }
 
-// Half-pixel hack
-var root = svg.append('g').attr('transform', 'translate(0.5, 0.5)')
+// Shallow extend
+function extend(dest, src) {
+    for (var key in src) {
+        if (src.hasOwnProperty(key)) {
+            dest[key] = src[key];
+        }
+    }
+    return dest;
+}
 
-var colour = d3.scale.category20();
+/**
+ * Generate a basic re-usable linear gradient
+ * @param  {string} id    Unique ID for this gradient
+ * @param  {array} stops  List of colour stops, as array of arrays: [offset, stop-color]
+ * @return {d3.selection} A d3.selection() of the generated <linearGradient> element
+ */
+function createLinearGradient(id, stops) {
+    var existing = svg.node().getElementById(id);
+    if (existing) {
+        return d3.select(existing);
+    }
+    var gradient = defs.append('linearGradient').attr('id', id);
+    gradient.selectAll('stops')
+        .data(stops || [])
+    .enter().append('stop')
+        .attr('offset', d => d[0])
+        .attr('stop-color', d => d[1])
+
+    return gradient;
+}
 
 var dopConnection = function (fromChart, toChart) {
     var startX = fromChart.dims.x + fromChart.lastCandidateWidth;
     var startY = fromChart.dims.y + fromChart.dims.height - chartBarHeight / 2;
     var endX = toChart.dims.x;
     var endY = toChart.dims.y + toChart.dims.height / 2;
-    var midX1 = startX + (endX - startX) / 3;
-    var midX2 = midX1 + (endX - startX) / 3;
+    var xDist = endX - startX;
+    var midX_1third = startX + xDist / 3;
+    var midX_2thirds = midX_1third + xDist / 3;
+    var midX_1quarter = startX + xDist / 4;
+    var midX_3quarters = midX_1quarter + xDist / 2;
 
-    var connection = {};
+    var connection = {
+        paths: {main: null, split: null}
+    };
 
     var fromNode = fromChart.nodes[fromChart.nodes.length - 1];
+    fromNode.sourceLinks.sort(function (a, b) {
+        return b.target.votes - a.target.votes;
+    });
+
     var pathRoot = root.append('g');
 
     var line = d3.svg.line()
@@ -85,34 +185,91 @@ var dopConnection = function (fromChart, toChart) {
         .y(d => snap(d[1]))
         .interpolate('basis')
 
-    var mainPath = pathRoot.append('path')
-        .attr('class', 'distribution distribution-main')
-        .attr('d', line([
-            [startX, startY],
-            [midX1, startY],
-            [midX1, endY],
-            [midX2, endY]
-        ]))
-        .style('stroke', fromNode.data.colour)
+    var area = d3.svg.area()
+        .x(d => snap(d[0]))
+        .y1(d => d[1])
+        .y0(d => d[2])
+        .interpolate('basis')
 
-    var splitPaths = pathRoot.selectAll('.distribution-split')
-        .data(fromNode.sourceLinks)
-    .enter().append('path')
-        .attr('class', 'distribution distribution-split')
-        .attr('d', function (d, i) {
-            var nodeY = toChart.dims.y + chartBarHeight * i + chartBarHeight / 2;
-            return line([
-                [midX2, endY],
-                [midX2, nodeY],
-                [endX, nodeY]
-            ]);
-        })
-        .style('stroke', fromNode.data.colour)
+    var renderers = {
+        simple: function () {
+            var mainPath = pathRoot.append('path')
+                .attr('class', 'distribution distribution-main')
+                .attr('d', line([
+                    [startX, startY],
+                    [midX_1third, startY],
+                    [midX_1third, endY],
+                    [midX_2thirds, endY]
+                ]))
+                .style('stroke', fromNode.data.colour)
 
-    connection.paths = {
-        main: mainPath,
-        split: splitPaths
+            var splitPaths = pathRoot.selectAll('.distribution-split')
+                .data(fromNode.sourceLinks)
+            .enter().append('path')
+                .attr('class', 'distribution distribution-split')
+                .attr('d', function (d, i) {
+                    var nodeY = toChart.dims.y + chartBarHeight * i + chartBarHeight / 2;
+                    return line([
+                        [midX_2thirds, endY],
+                        [midX_2thirds, nodeY],
+                        [endX, nodeY]
+                    ]);
+                })
+                .style('stroke', fromNode.data.colour)
+
+            connection.paths = {
+                main: mainPath,
+                split: splitPaths
+            };
+        },
+
+        proportional: function () {
+            var lastCandidateY = fromChart.dims.y + fromChart.dims.height - chartBarHeight;
+            var aggregatePercentage = 0;
+
+            var paths = pathRoot.selectAll('.distribution-proportional')
+                .data(fromNode.sourceLinks)
+            .enter().append('path')
+                .attr('class', 'distribution distribution-proportional')
+                .attr('d', function (d, i) {
+                    var relativeValue = d.votes / fromNode.votes;
+                    var pathHeight = relativeValue * chartBarHeight;
+                    var pathStartYTop = lastCandidateY + aggregatePercentage * chartBarHeight;
+                    var pathStartYBottom = pathStartYTop + pathHeight;
+                    var nodeY = toChart.dims.y + chartBarHeight * i + chartBarHeight / 2;
+                    var pathEndYTop = nodeY - pathHeight / 2;
+                    var pathEndYBottom = nodeY + pathHeight / 2;
+
+                    aggregatePercentage += relativeValue;
+
+                    return area([
+                        // Co-ordinates: [x, topY, bottomY]
+                        [startX, pathStartYTop, pathStartYBottom],
+                        [midX_1quarter, pathStartYTop, pathStartYBottom],
+                        [midX_3quarters, pathEndYTop, pathEndYBottom],
+                        [endX, pathEndYTop, pathEndYBottom]
+                    ]);
+                })
+                // .style('fill', fromNode.data.colour)
+                .style('fill', function (d) {
+                    var id = 'grad-' + d.source.data.Party + '-' + d.target.data.Party;
+                    createLinearGradient(id, [
+                        ['20%', d.source.data.colour],
+                        ['100%', d.target.data.colour]
+                    ]);
+                    return 'url(#' + id + ')';
+                })
+
+            connection.paths = {
+                main: d3.select(paths.node()),
+                split: paths
+            }
+        }
     };
+
+    if (dop.linkType in renderers) {
+        renderers[dop.linkType]();
+    }
 
     return connection;
 };
@@ -153,8 +310,11 @@ var dopRoundChart = function (nodes) {
         // Re-align the last text label to avoid the connection line
         var lastLabel = chart.container.select('.candidate:last-child .candidate-label');
         if (lastLabel.datum().isLabelOutside) {
-            var connDims = chart.distribution.paths.main.node().getBBox();
-            lastLabel.attr('dx', connDims.width / 2 - chartTextPadding);
+            var connectionPath = chart.distribution.paths.main;
+            if (connectionPath) {
+                var connectionDims = connectionPath.node().getBBox();
+                lastLabel.attr('dx', connectionDims.width / 2 - chartTextPadding);
+            }
         }
     };
 
@@ -216,18 +376,15 @@ var dopRoundChart = function (nodes) {
 };
 
 
+/*** INITIAL DATA LOAD ***/
+
 d3.json('melb-flow.json', function (data) {
-    var objects = dopUtils.buildNodesAndLinks(data);
-    var nodes = objects.nodes;
-    var nodeGroups = objects.nodeGroups;
-    var links = objects.links;
-    var totalVotes = objects.totalVotes;
+    extend(dop, dopUtils.buildNodesAndLinks(data));
 
-    widthPerVote = chartBarMaxWidth / totalVotes;
-    requiredVotes = Math.floor(totalVotes / 2) + 1;
+    widthPerVote = chartBarMaxWidth / dop.totalVotes;
+    requiredVotes = Math.floor(dop.totalVotes / 2) + 1;
 
-//     dopRoundChart(nodeGroups[0]).position(0, 20);
-    var charts = nodeGroups.map(function (group) {
+    var charts = dop.nodeGroups.map(function (group) {
         return dopRoundChart(group);
     });
     var xPos = 0;
@@ -244,6 +401,11 @@ d3.json('melb-flow.json', function (data) {
     });
     svg.attr('width', Math.round(prevChart.dims.x + prevChart.dims.width + chartLeftOffset))
         .attr('height', yPos);
+
+    // Define main drawing method
+    dop.draw = function () {
+        console.log('REDRAW!');
+    }
 });
 
 </script>
