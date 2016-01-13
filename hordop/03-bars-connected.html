@@ -50,7 +50,7 @@ label[aria-disabled="true"] {
     <div class="option">
         Bar type:
         <label><input type="radio" name="barType" value="single" checked> Single bar per candidate</label>
-        <label aria-disabled="true"><input type="radio" name="barType" value="splitSource" disabled> Split into vote sources</label>
+        <label><input type="radio" name="barType" value="splitSource"> Split into vote sources</label>
     </div>
 </div>
 <script src="../d3.js"></script>
@@ -87,6 +87,9 @@ var dop = {
 var svg = d3.select('body').append('svg');
 // Half-pixel hack
 var root = svg.append('g').attr('transform', 'translate(0.5, 0.5)');
+// Containers for charts and connections
+var distRoot = root.append('g').attr('class', 'distribution-root');
+var chartRoot = root.append('g').attr('class', 'chart-root');
 // Re-usable definitions
 var defs = svg.append('defs');
 
@@ -170,25 +173,21 @@ var dopConnection = function (fromChart, toChart) {
     var midX_3quarters = midX_1quarter + xDist / 2;
 
     var connection = {
-        paths: {main: null, split: null}
+        paths: {main: null, split: null},
+        root: null
     };
 
     // Clean up any paths created by a connection
     connection.remove = function () {
-        var p = connection.paths;
-        for (var key in p) {
-            if (p.hasOwnProperty(key) && p[key] && p[key].remove) {
-                p[key].remove();
-            }
+        if (connection.root) {
+            connection.root.remove();
         }
     };
 
     var fromNode = fromChart.nodes[fromChart.nodes.length - 1];
-    fromNode.sourceLinks.sort(function (a, b) {
-        return b.target.votes - a.target.votes;
-    });
 
-    var pathRoot = root.append('g');
+    var pathRoot = distRoot.append('g');
+    connection.root = pathRoot;
 
     var line = d3.svg.line()
         .x(d => snap(d[0]))
@@ -303,7 +302,7 @@ var dopRoundChart = function (nodes) {
         }
     };
 
-    var container = root.append('g').attr('class', 'round-chart');
+    var container = chartRoot.append('g').attr('class', 'round-chart');
 
     chart.container = container;
     chart.position = function (x, y) {
@@ -353,15 +352,38 @@ var dopRoundChart = function (nodes) {
         .attr('class', 'candidate')
         .attr('transform', function (d, i) { return 'translate(0,' + (i * chartBarHeight) + ')'; })
 
-    var bar = candidates.append('rect')
-        .attr('class', 'candidate-bar')
-        .style('fill', d => d.data.colour)
-        .attr('x', 0)
-        .attr('y', 0)
-        .attr('width', d => snap(widthPerVote * d.votes))
-        .attr('height', chartBarHeight)
-    bar.append('title')
-        .text(d => d.data.Party + ' ' + d.votes);
+    var barRenderers = {
+        single: function () {
+            var bar = candidates.append('rect')
+                .attr('class', 'candidate-bar')
+                .style('fill', d => d.data.colour)
+                .attr('x', 0)
+                .attr('y', 0)
+                .attr('width', d => snap(widthPerVote * d.votes))
+                .attr('height', chartBarHeight)
+            bar.append('title')
+                .text(d => d.data.Party + ' ' + d.votes);
+        },
+
+        splitSource: function () {
+            var barBlocks = candidates.selectAll('.candidate-bar')
+                .data(d => d.voteSources)
+            .enter().append('rect')
+                .attr('class', 'candidate-bar')
+                .style('fill', d => d.node.data.colour)
+                .attr('x', d => snap(d.aggregateVotes * widthPerVote))
+                .attr('y', 0)
+                .attr('width', d => snap(widthPerVote * d.votes))
+                .attr('height', chartBarHeight)
+
+            // barBlocks.append('title')
+            //     .text(d => d.data.Party + ' ' + d.votes);
+        }
+    };
+
+    if (dop.barType in barRenderers) {
+        barRenderers[dop.barType]();
+    }
 
     // Text labels
     candidates.append('text')
@@ -394,10 +416,67 @@ d3.json('melb-flow.json', function (data) {
     widthPerVote = chartBarMaxWidth / dop.totalVotes;
     requiredVotes = Math.floor(dop.totalVotes / 2) + 1;
 
+    // Sort links for all nodes, in order of most votes to least
+    dop.nodes.forEach(function (node) {
+        node.sourceLinks.sort(function (a, b) {
+            return b.target.votes - a.target.votes;
+        });
+        node.targetLinks.sort(function (a, b) {
+            return b.source.votes - a.source.votes;
+        });
+    });
+
+    // Group all vote sources per round of counting
+    dop.nodeGroups.forEach(function (group) {
+        group.forEach(function (node) {
+            node.voteSources = [];
+            var links = node.targetLinks;
+
+            // If this is the first round of counting, all votes are first preferences
+            if (!links.length) {
+                node.voteSources.push({
+                    node: node,
+                    aggregateVotes: 0,
+                    votes: node.votes
+                });
+                return;
+            }
+
+            var aggregate = 0;
+            var checkedCandidates = d3.set();
+
+            // Grab the vote sources for this candidate in the previous round of counting
+            if (node.prevNode) {
+                node.voteSources = [].concat(node.prevNode.voteSources);
+                node.voteSources.forEach(function (source) {
+                    aggregate += source.votes;
+                    checkedCandidates.add(source.node.candidateIndex);
+                });
+            }
+
+            // Add in any additional vote sources for this round of counting
+            links.forEach(function (link) {
+                var idx = link.source.candidateIndex;
+                if (!checkedCandidates.has(idx)) {
+                    node.voteSources.push({
+                        node: link.source,
+                        aggregateVotes: aggregate,
+                        votes: link.votes
+                    });
+                    aggregate += link.votes;
+                    checkedCandidates.add(idx);
+                }
+            });
+        });
+    });
+
+    // Build one chart per round of counting
     var charts = dop.nodeGroups.map(function (group) {
         return dopRoundChart(group);
     });
     dop.charts = charts;
+
+    // Position each chart sequentially
     var xPos = 0;
     var yPos = 20;
     charts.forEach(function (chart) {
@@ -406,7 +485,11 @@ d3.json('melb-flow.json', function (data) {
         yPos += chart.dims.height + chartTopMargin;
         prevChart = chart;
     });
+
+    // Build distribution links
     connectCharts();
+
+    // Make sure the container is big enough to fit everything
     svg.attr('width', Math.round(prevChart.dims.x + prevChart.dims.width + chartLeftOffset))
         .attr('height', yPos);
 
@@ -426,7 +509,6 @@ d3.json('melb-flow.json', function (data) {
 
     // Define main drawing method
     dop.draw = function () {
-        console.log('REDRAW!');
         connectCharts();
     }
 });
