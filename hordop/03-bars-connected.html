@@ -352,23 +352,33 @@ var dopRoundChart = function (nodes) {
         .attr('class', 'candidate')
         .attr('transform', function (d, i) { return 'translate(0,' + (i * chartBarHeight) + ')'; })
 
+    var barContainers = candidates.append('g')
+        .attr('class', 'candidate-bar-group')
+
     var barRenderers = {
         single: function () {
-            var bar = candidates.append('rect')
+            var bar = barContainers.selectAll('.candidate-bar')
+                .data(d => [d])
+
+            bar.enter().append('rect')
                 .attr('class', 'candidate-bar')
                 .style('fill', d => d.data.colour)
                 .attr('x', 0)
                 .attr('y', 0)
                 .attr('width', d => snap(widthPerVote * d.votes))
                 .attr('height', chartBarHeight)
+
+            bar.exit().remove()
+
             bar.append('title')
                 .text(d => d.data.Party + ' ' + d.votes);
         },
 
         splitSource: function () {
-            var barBlocks = candidates.selectAll('.candidate-bar')
+            var barBlocks = barContainers.selectAll('.candidate-bar')
                 .data(d => d.voteSources)
-            .enter().append('rect')
+
+            barBlocks.enter().append('rect')
                 .attr('class', 'candidate-bar')
                 .style('fill', d => d.node.data.colour)
                 .attr('x', d => snap(d.aggregateVotes * widthPerVote))
@@ -376,14 +386,12 @@ var dopRoundChart = function (nodes) {
                 .attr('width', d => snap(widthPerVote * d.votes))
                 .attr('height', chartBarHeight)
 
-            // barBlocks.append('title')
-            //     .text(d => d.data.Party + ' ' + d.votes);
+            barBlocks.exit().remove()
+
+            barBlocks.append('title')
+                .text(d => d.node.data.Party + ' ' + d.votes);
         }
     };
-
-    if (dop.barType in barRenderers) {
-        barRenderers[dop.barType]();
-    }
 
     // Text labels
     candidates.append('text')
@@ -403,6 +411,14 @@ var dopRoundChart = function (nodes) {
             d.isLabelOutside = false;
             return chartTextPadding;
         })
+
+    // Allow re-rendering of bars
+    chart.draw = function () {
+        if (dop.barType in barRenderers) {
+            barRenderers[dop.barType]();
+        }
+    }
+    chart.draw();
 
     return chart;
 };
@@ -510,6 +526,7 @@ d3.json('melb-flow.json', function (data) {
     // Define main drawing method
     dop.draw = function () {
         connectCharts();
+        charts.forEach(chart => chart.draw());
     }
 });
 
