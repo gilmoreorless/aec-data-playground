@@ -1,5 +1,31 @@
 var dopUtils = {};
 
+/**
+ * Snap all values to whole pixel values.
+ * Works on single numbers or arrays of numbers.
+ */
+dopUtils.snap = function (num) {
+    if (Array.isArray(num)) {
+        return num.map(dopUtils.snap);
+    }
+    if (!isNaN(num)) {
+        return Math.round(num);
+    }
+    return num;
+};
+
+/**
+ * Basic shallow key/value extension of an object
+ */
+dopUtils.extend = function (dest, src) {
+    for (var key in src) {
+        if (src.hasOwnProperty(key)) {
+            dest[key] = src[key];
+        }
+    }
+    return dest;
+};
+
 dopUtils.buildNodesAndLinks = function (dopData) {
     var candidates = dopData.candidates, flow = dopData.flow;
     var links = [];

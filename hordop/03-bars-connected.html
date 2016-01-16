@@ -85,13 +85,13 @@ var dop = {
 };
 // Base container
 var svg = d3.select('body').append('svg');
+// Re-usable definitions
+var defs = svg.append('defs');
 // Half-pixel hack
 var root = svg.append('g').attr('transform', 'translate(0.5, 0.5)');
 // Containers for charts and connections
 var distRoot = root.append('g').attr('class', 'distribution-root');
 var chartRoot = root.append('g').attr('class', 'chart-root');
-// Re-usable definitions
-var defs = svg.append('defs');
 
 
 /*** CONTROLS ***/
@@ -120,25 +120,7 @@ Array.prototype.forEach.call(controlsRoot.querySelectorAll('.option'), function 
 
 /*** UTILITIES ***/
 
-function snap(num) {
-    if (Array.isArray(num)) {
-        return num.map(snap);
-    }
-    if (!isNaN(num)) {
-        return Math.round(num);
-    }
-    return num;
-}
-
-// Shallow extend
-function extend(dest, src) {
-    for (var key in src) {
-        if (src.hasOwnProperty(key)) {
-            dest[key] = src[key];
-        }
-    }
-    return dest;
-}
+var snap = dopUtils.snap;
 
 /**
  * Generate a basic re-usable linear gradient
@@ -427,7 +409,7 @@ var dopRoundChart = function (nodes) {
 /*** INITIAL DATA LOAD ***/
 
 d3.json('melb-flow.json', function (data) {
-    extend(dop, dopUtils.buildNodesAndLinks(data));
+    dopUtils.extend(dop, dopUtils.buildNodesAndLinks(data));
 
     widthPerVote = chartBarMaxWidth / dop.totalVotes;
     requiredVotes = Math.floor(dop.totalVotes / 2) + 1;

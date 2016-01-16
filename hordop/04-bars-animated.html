@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<meta charset="utf8">
+<title>Bar charts &ndash; animated</title>
+<style>
+
+body {
+    font-family: sans-serif;
+}
+label {
+    margin-left: .5em;
+}
+label[aria-disabled="true"] {
+    opacity: .5;
+}
+
+.main-text {
+    font-style: italic;
+    line-height: 1.25;
+    min-height: 2.5em;
+}
+
+.round-border {
+    fill: none;
+    stroke: #ddd;
+    stroke-dasharray: 2 1;
+}
+.required-votes-marker {
+    fill: none;
+    stroke: #666;
+    stroke-width: 1;
+    stroke-dasharray: 3;
+}
+.candidate-bar {
+    stroke: #333;
+    stroke-width: 0.5;
+}
+.candidate-label {
+    font-size: .875em;
+}
+
+</style>
+<body>
+<div id="controls">
+    <!-- TO BE FILLED IN LATER -->
+</div>
+<p id="explanation" class="main-text" aria-live="polite"></p>
+
+<script src="../d3.js"></script>
+<script src="dop-utils.js"></script>
+<script>
+
+/*** CONFIG ***/
+
+// Editable config values
+var chartBarMaxWidth = 600;
+var chartBarHeight = 25;
+var chartTopMargin = 30;
+var chartTextPadding = 6;
+
+var animTimeSizeBars = 800;
+var animTimeSortBars = 500;
+
+// Other config - updated dynamically after data is loaded
+var widthPerVote = 0;
+var requiredVotes = 0;
+
+
+/*** SETUP ***/
+
+// Root object
+var dop = {
+    barType: 'single',
+    nodes: [],
+    nodeGroups: [],
+    links: [],
+    totalVotes: 0,
+    draw: function () {}
+};
+// Explanation text container
+var explanation = d3.select('#explanation');
+// Base drawing container
+var svg = d3.select('body').append('svg');
+// Re-usable definitions
+var defs = svg.append('defs');
+// Half-pixel hack
+var root = svg.append('g').attr('transform', 'translate(0.5, 0.5)');
+
+
+/*** CONTROLS ***/
+
+// TBC
+
+
+/*** UTILITIES ***/
+
+var snap = dopUtils.snap;
+
+
+/*** MAIN CHART RENDERER */
+
+var dopRoundChart = function (nodes) {
+    // Calculated values
+    var halfway = 0, totalHeight = 0;
+    // D3 selections
+    var container, boundingBorder, halfwayLine, candidateContainers, candidateGroups, candidateBars, candidateLabels;
+
+    var chart = {
+        nodes: null,
+        maxVotes: 0,
+        maxCandidateWidth: 0,
+        lastCandidateWidth: 0,
+        dims: {
+            width: chartBarMaxWidth,
+            height: 0,
+            x: 0,
+            y: 0
+        },
+    };
+
+    container = root.append('g').attr('class', 'round-chart');
+    chart.container = container;
+
+    /**
+     * Move the chart to specified x/y coordinates
+     */
+    chart.position = function (x, y) {
+        x = snap(x);
+        y = snap(y);
+        chart.dims.x = x;
+        chart.dims.y = y;
+        container.attr('transform', 'translate(' + x + ',' + y + ')');
+        return chart;
+    };
+
+    /**
+     * Get or set data for the chart
+     */
+    chart.data = function (data) {
+        if (!arguments.length) {
+            return chart.nodes;
+        }
+        chart.nodes = data;
+        // Calculate derived values from data
+        halfway = snap(widthPerVote * requiredVotes);
+        totalHeight = chartBarHeight * data.length;
+        chart.maxVotes = d3.max(data, d => d.votes);
+        chart.dims.height = totalHeight;
+        chart.maxCandidateWidth  = data.length ? widthPerVote * data[0].votes : 0;
+        chart.lastCandidateWidth = data.length ? widthPerVote * data[data.length - 1].votes : 0;
+        return chart;
+    };
+
+    // Initial setup
+    chart.data(nodes);
+
+    /**
+     *
+     */
+    chart.render = function () {
+        // Correctly size the bounding area
+        boundingBorder.transition()
+            .duration(animTimeSizeBars)
+            .attr('width', chartBarMaxWidth)
+            .attr('height', totalHeight)
+
+        // Position/size the "required votes" line
+        halfwayLine.transition()
+            .duration(animTimeSizeBars)
+            .attr('x1', halfway)
+            .attr('x2', halfway)
+            .attr('y1', -5)
+            .attr('y2', totalHeight + 10)
+
+        // Ensure containers for each candidate
+        candidateContainers = container.selectAll('.candidate')
+            .data(chart.nodes, d => d.candidateIndex)
+        candidateContainers.enter().append('g')
+            .attr('class', 'candidate')
+            .attr('transform', function (d, i) { return 'translate(0,' + (i * chartBarHeight) + ')'; })
+
+        // Set up bars and labels
+        candidateBars = candidateContainers.selectAll('.candidate-bar')
+            .data(d => [d])
+        candidateLabels = candidateContainers.selectAll('.candidate-label')
+            .data(d => [d])
+
+        // Add bars and labels for new candidates
+        candidateBars.enter().append('rect')
+            .attr('class', 'candidate-bar')
+            .style('fill', d => d.data.colour)
+            .attr('x', 0)
+            .attr('y', 0)
+            .attr('width', 0)
+            .attr('height', chartBarHeight)
+            .append('title')
+        candidateLabels.enter().append('text')
+            .attr('class', 'candidate-label')
+            .attr('x', chartTextPadding)
+            .attr('y', snap(chartBarHeight / 2))
+            .attr('dy', '.35em')
+
+        // Remove elements for eliminated candidates
+        candidateContainers.exit().remove()
+
+        // Update titles for remaining candidates
+        candidateBars.selectAll('title')
+            .text(d => d.data.Party + ' ' + d.votes);
+
+        // Animate bars to correct size
+        candidateBars.transition()
+            .duration(animTimeSizeBars)
+            .attr('width', d => snap(widthPerVote * d.votes))
+        candidateLabels
+            .transition()
+            .duration(animTimeSizeBars)
+            .text(d => d.data.Party + ' ' + d.votePercentage.toFixed(2) + '%')
+            .attr('x', function (d) {
+                // If the text doesn't fit, put it outside the bar
+                var textSize = this.getComputedTextLength();
+                var paddedSize = textSize + chartTextPadding * 2;
+                var barWidth = widthPerVote * d.votes;
+                if (paddedSize > barWidth) {
+                    d.isLabelOutside = true;
+                    return barWidth + chartTextPadding;
+                }
+                d.isLabelOutside = false;
+                return chartTextPadding;
+            })
+    };
+
+    /**
+     *
+     */
+    chart.sortBars = function () {
+        candidateContainers.transition()
+            .duration(animTimeSortBars)
+            .attr('transform', function (d, i) { return 'translate(0,' + (i * chartBarHeight) + ')'; })
+    };
+
+    /**
+     *
+     */
+    chart.distributeBar = function () {
+        console.log('no-op chart.distributeBar()')
+    };
+
+/*
+        * chart.sortBars()
+        * chart.distributeBar()
+            * distribution.pullOutBar()
+            * distribution.splitBar()
+            * distribution.redistribute()
+            * distribution.remove()
+*/
+
+    // Bounding area
+    boundingBorder = container.append('rect')
+        .attr('class', 'round-border')
+        .attr('x', 0)
+        .attr('y', 0)
+
+    // 50% line
+    halfwayLine = container.append('line')
+        .attr('class', 'required-votes-marker')
+
+    return chart;
+};
+
+
+/*** CONTROLLER ***/
+
+var dopController = {
+    ready: function () {
+        console.log('ready');
+
+        dop.chart.render();
+    },
+
+
+};
+
+/***
+
+BASIC FLOW
+
+- Load/process data
+- SET displayOrder to candidate order on vote cards
+- Draw chart
+    - Place bars in displayOrder
+        * chart.renderBars()
+    - ANIMATE sort bars by most votes to least
+        * chart.sortBars()
+    - SET displayOrder to current order
+    - If a candidate has > 50%, announce them as winner
+        - EXIT
+    - Eliminate lowest-voted candidate
+        - ANIMATE pull out candidate bar and zoom to focus
+            * distribution.setBar()
+            * distribution.pullOutBar()
+        - ANIMATE split bar into blocks of votes to be distributed
+            * distribution.splitBar()
+        - ANIMATE move blocks onto the end of other candidate bars
+            * distribution.redistribute()
+        - ANIMATE merge blocks into existing candidate bars
+            * chart.data()
+            * chart.renderBars()
+            * distribution.remove()
+        - GO TO "Draw chart"
+
+***/
+
+
+/*** INITIAL DATA LOAD ***/
+
+d3.json('melb-flow.json', function (data) {
+    dopUtils.extend(dop, dopUtils.buildNodesAndLinks(data));
+    widthPerVote = chartBarMaxWidth / dop.totalVotes;
+
+    requiredVotes = Math.floor(dop.totalVotes / 2) + 1;
+
+    // Sort links for all nodes, in order of most votes to least
+    dop.nodes.forEach(function (node) {
+        node.sourceLinks.sort(function (a, b) {
+            return b.target.votes - a.target.votes;
+        });
+        node.targetLinks.sort(function (a, b) {
+            return b.source.votes - a.source.votes;
+        });
+    });
+
+    // Build one chart per round of counting
+    var margin = 20;
+    dop.chart = dopRoundChart(dop.nodeGroups[0]).position(0, margin);
+
+    // Make sure the container is big enough to fit everything
+    svg.attr('width', Math.round(dop.chart.dims.x + dop.chart.dims.width + margin))
+        .attr('height', Math.round(dop.chart.dims.y + dop.chart.dims.height + margin));
+
+    // Start the animation controller
+    dopController.ready();
+});
+</script>
