@@ -85,6 +85,8 @@ var dop = {
     totalVotes: 0,
     draw: function () {}
 };
+// Control DOM nodes (filled in later)
+var controls = {};
 // Explanation text container
 var explanation = d3.select('#explanation');
 // Base drawing container
@@ -110,17 +112,52 @@ controlsRoot.addEventListener('click', function (e) {
     }
 }, false);
 
+Array.prototype.forEach.call(controlsRoot.querySelectorAll('button[id]'), function (button) {
+    var id = button.id.replace(/^ctl-/, '');
+    controls[id] = button;
+});
+controls.forEach = function (fn) {
+    Object.keys(controls).forEach(function (key) {
+        if (key !== 'forEach') {
+            fn(controls[key], key);
+        }
+    });
+};
+
 
 /*** UTILITIES ***/
 
 var snap = dopUtils.snap;
 
+/**
+ * A simple Promise that just pauses execution for a given amount of milliseconds
+ */
 function pause(time) {
     return function () {
         return new Promise(function (resolve) {
             setTimeout(resolve, time);
         });
     }
+}
+
+/**
+ * Create a Promise that resolves when a d3 transition has finished
+ */
+function transitionPromise(duration, body) {
+    return new Promise(function (resolve) {
+        d3.transition()
+            .duration(duration)
+            .each('end', resolve)
+            .each(body);
+    });
+}
+
+/**
+ * Display helper for showing candidate name + party
+ */
+function candText(candidate) {
+    var d = candidate.data;
+    return d.GivenNm + ' ' + d.Surname + ' (' + d.Party + ')';
 }
 
 
@@ -162,6 +199,7 @@ var dopRoundChart = function (nodes) {
 
     /**
      * Get or set data for the chart
+     * @return {array|chart}
      */
     chart.data = function (data) {
         if (!arguments.length) {
@@ -182,7 +220,8 @@ var dopRoundChart = function (nodes) {
     chart.data(nodes);
 
     /**
-     *
+     * Draw the current data, animating elements as needed
+     * @return {Promise} Resolves when all animations have finished
      */
     chart.render = function () {
         // Correctly size the bounding area
@@ -235,44 +274,42 @@ var dopRoundChart = function (nodes) {
             .text(d => d.data.Party + ' ' + d.votes);
 
         // Animate bars to correct size
-        return new Promise(function (resolve) {
-            d3.transition()
-                .duration(animTimeSizeBars)
-                .each('end', resolve)
-                .each(function () {
-                    candidateBars.transition()
-                        .attr('width', d => snap(widthPerVote * d.votes))
-                    candidateLabels.transition()
-                        .text(d => d.data.Party + ' ' + d.votePercentage.toFixed(2) + '%')
-                        .attr('x', function (d) {
-                            // If the text doesn't fit, put it outside the bar
-                            var textSize = this.getComputedTextLength();
-                            var paddedSize = textSize + chartTextPadding * 2;
-                            var barWidth = widthPerVote * d.votes;
-                            if (paddedSize > barWidth) {
-                                d.isLabelOutside = true;
-                                return barWidth + chartTextPadding;
-                            }
-                            d.isLabelOutside = false;
-                            return chartTextPadding;
-                        })
+        return transitionPromise(animTimeSizeBars, function () {
+            candidateBars.transition()
+                .attr('width', d => snap(widthPerVote * d.votes))
+            candidateLabels.transition()
+                .text(d => d.data.Party + ' ' + d.votePercentage.toFixed(2) + '%')
+                .attr('x', function (d) {
+                    // If the text doesn't fit, put it outside the bar
+                    var textSize = this.getComputedTextLength();
+                    var paddedSize = textSize + chartTextPadding * 2;
+                    var barWidth = widthPerVote * d.votes;
+                    if (paddedSize > barWidth) {
+                        d.isLabelOutside = true;
+                        return barWidth + chartTextPadding;
+                    }
+                    d.isLabelOutside = false;
+                    return chartTextPadding;
                 })
         });
     };
 
     /**
-     *
+     * Sort (with animation) the candidate bars, with most votes on top
+     * @return {Promise} Resolves when all animations have finished
      */
     chart.sortBars = function () {
-        candidateContainers.transition()
-            .duration(animTimeSortBars)
-            .attr('transform', function (d, i) { return 'translate(0,' + (i * chartBarHeight) + ')'; })
-
-        return chart;
+        return transitionPromise(animTimeSortBars, function () {
+            candidateContainers.transition()
+                .attr('transform', function (d, i) {
+                    return 'translate(0,' + (i * chartBarHeight) + ')';
+                })
+        });
     };
 
     /**
-     *
+     * Init a new distribution for an eliminated candidate
+     * @return {dopDistribution}
      */
     chart.distribution = function (index) {
         if (!arguments.length) {
@@ -314,6 +351,7 @@ var dopDistribution = function (chart) {
 
     /**
      * Set up the distribution and move the candidate's elements into a new container
+     * @return {dopDistribution}
      */
     dist.grabCandidate = function (index) {
         dist.data = chart.data()[index];
@@ -325,6 +363,7 @@ var dopDistribution = function (chart) {
 
     /**
      * Enlarge and pull out the candidate's bar
+     * @return {Promise} Resolves when all animations have finished
      */
     dist.focusBar = function () {
         return new Promise(function (resolve) {
@@ -341,9 +380,10 @@ var dopDistribution = function (chart) {
 
     /**
      * Split candidate's bar into separate distribution chunks
+     * @return {Promise} Resolves when all animations have finished
      */
     dist.splitBar = function () {
-        return new Promise(function (resolve) {
+        return transitionPromise(animTimeSplitDist, function () {
             var node = chartBarGroup.datum();
             var chunkMax = node.sourceLinks.length - 1;
             var chunkMid = chunkMax / 2;
@@ -376,29 +416,25 @@ var dopDistribution = function (chart) {
                     return 'translate(' + x + ',0)';
                 })
 
-            d3.transition()
-                .duration(animTimeSplitDist)
-                .each('end', resolve)
-                .each(function () {
-                    barChunks.transition()
-                        .attr('transform', function (d, i) {
-                            var idxDiff = i - chunkMid;
-                            this.relX += idxDiff * distSplitBarGap;
-                            return 'translate(' + snap(this.relX) + ',0)';
-                        })
-                    chartBarGroup.selectAll('.candidate-label')
-                        .transition()
-                        .style('opacity', 0)
-                        .remove()
+            barChunks.transition()
+                .attr('transform', function (d, i) {
+                    var idxDiff = i - chunkMid;
+                    this.relX += idxDiff * distSplitBarGap;
+                    return 'translate(' + snap(this.relX) + ',0)';
                 })
+            chartBarGroup.selectAll('.candidate-label')
+                .transition()
+                .style('opacity', 0)
+                .remove()
         });
     };
 
     /**
      * Move bar chunks onto their relevant candidates on the graph
+     * @return {Promise} Resolves when all animations have finished
      */
     dist.redistribute = function () {
-        return new Promise(function (resolve) {
+        return transitionPromise(animTimeRetargetDist * 2, function () {
             // Reset coordinate system
             var groupTransform = d3.transform(chartBarGroup.attr('transform'));
             chartBarGroup.attr('transform', 'translate(0,0)')
@@ -408,25 +444,21 @@ var dopDistribution = function (chart) {
 
             // Start distribution animation
             var chunkCount = barChunks.size()
-            d3.transition()
-                .duration(animTimeRetargetDist * 2)
-                .each('end', resolve)
-                .each(function () {
-                    barChunks.transition()
-                        .duration(animTimeRetargetDist)
-                        .delay((d, i) => (chunkCount - 1 - i) / chunkCount * animTimeRetargetDist)
-                        .attr('transform', function (d, i) {
-                            var prevVotes = d.target.prevNode.votes;
-                            var x = prevVotes * widthPerVote;
-                            var y = (chunkCount - 1 - i) * chartBarHeight;
-                            return 'translate(' + [x, y] + ')';
-                        })
+            barChunks.transition()
+                .duration(animTimeRetargetDist)
+                .delay((d, i) => (chunkCount - 1 - i) / chunkCount * animTimeRetargetDist)
+                .attr('transform', function (d, i) {
+                    var prevVotes = d.target.prevNode.votes;
+                    var x = prevVotes * widthPerVote;
+                    var y = (chunkCount - 1 - i) * chartBarHeight;
+                    return 'translate(' + [x, y] + ')';
                 })
         });
     };
 
     /**
      * Clean up any left over elements and data
+     * @return {Promise} Resolves when all animations have finished
      */
     dist.remove = function () {
         return new Promise(function (resolve) {
@@ -446,6 +478,12 @@ var dopDistribution = function (chart) {
 var dopController = {
     currentRound: -1,
     maxRound: 0,
+    isAnimating: false,
+
+    setAnimating: function (isAnimating) {
+        this.isAnimating = isAnimating;
+        controls.forEach(btn => btn.disabled = isAnimating);
+    },
 
     ready: function () {
         this.showRound(0);
@@ -462,7 +500,7 @@ var dopController = {
     showRound: function (index) {
         // Clamp index to [0, rounds] bounds
         index = Math.max(0, Math.min(this.maxRound, index));
-        if (index === this.currentRound) {
+        if (this.isAnimating || index === this.currentRound) {
             return;
         }
         var isFirst = this.currentRound === -1;
@@ -473,6 +511,7 @@ var dopController = {
         var nextFn = function () {
             this.renderRound(index);
         }.bind(this);
+        this.setAnimating(true);
         if (isNext && !isFirst) {
             this.distributeLastCandidate().then(nextFn);
         } else {
@@ -494,14 +533,13 @@ var dopController = {
                     }
                 });
             })
-            .then(dop.chart.sortBars);
+            // .then(dop.chart.sortBars);
+            .then(function () {
+                dop.chart.sortBars();
+                dopController.setAnimating(false);
+            })
 
         // Work out what to say
-        function candText(candidate) {
-            var d = candidate.data;
-            return d.GivenNm + ' ' + d.Surname + ' (' + d.Party + ')';
-        }
-
         var text = 'Round ' + (index + 1) + '. ';
         var firstCandidate = dop.nodeGroups[index][0];
         if (firstCandidate.votes >= requiredVotes) {
@@ -536,9 +574,9 @@ BASIC FLOW
 - Load/process data
 - SET displayOrder to candidate order on vote cards
 - Draw chart
-    - Place bars in displayOrder
+    ! Place bars in displayOrder
         * chart.render()
-    - ANIMATE sort bars by most votes to least
+    ! ANIMATE sort bars by most votes to least
         * chart.sortBars()
     - SET displayOrder to current order
     - If a candidate has > 50%, announce them as winner
