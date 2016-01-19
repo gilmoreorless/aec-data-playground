@@ -58,8 +58,16 @@ var chartBarHeight = 25;
 var chartTopMargin = 30;
 var chartTextPadding = 6;
 
+var distLeftMargin = 200;
+var distTopMargin = 15;
+var distFocusScale = 2;
+var distSplitBarGap = 5;
+
 var animTimeSizeBars = 800;
 var animTimeSortBars = 500;
+var animTimeFocusDist = 800;
+var animTimeSplitDist = 400;
+var animTimeRetargetDist = 400;
 
 // Other config - updated dynamically after data is loaded
 var widthPerVote = 0;
@@ -106,6 +114,14 @@ controlsRoot.addEventListener('click', function (e) {
 /*** UTILITIES ***/
 
 var snap = dopUtils.snap;
+
+function pause(time) {
+    return function () {
+        return new Promise(function (resolve) {
+            setTimeout(resolve, time);
+        });
+    }
+}
 
 
 /*** MAIN CHART RENDERER */
@@ -219,7 +235,7 @@ var dopRoundChart = function (nodes) {
             .text(d => d.data.Party + ' ' + d.votes);
 
         // Animate bars to correct size
-        return new Promise(function (resolve, reject) {
+        return new Promise(function (resolve) {
             d3.transition()
                 .duration(animTimeSizeBars)
                 .each('end', resolve)
@@ -283,7 +299,7 @@ var dopRoundChart = function (nodes) {
 
 var dopDistribution = function (chart) {
     // D3 selections
-    var chartBarGroup;
+    var chartBarGroup, barChunks;
 
     var dist = {
         chart: chart,
@@ -291,7 +307,7 @@ var dopDistribution = function (chart) {
         container: null,
     };
 
-    var container = root.append('g')
+    var container = root.insert('g', () => chart.container.node())
         .attr('class', 'distribution')
         .attr('transform', chart.container.attr('transform'))
     dist.container = container;
@@ -304,39 +320,121 @@ var dopDistribution = function (chart) {
         chartBarGroup = chart.container.selectAll('.candidate')
             .filter((d, i) => i === index)
         container.append(() => chartBarGroup.node());
-        return Promise.resolve();
+        return dist;
     };
 
     /**
      * Enlarge and pull out the candidate's bar
      */
     dist.focusBar = function () {
-        // CODE HERE
-        return Promise.resolve();
+        return new Promise(function (resolve) {
+            var top = chart.dims.y + chart.dims.height + distTopMargin;
+            chartBarGroup.transition()
+                .duration(animTimeFocusDist)
+                // .attr('transform', 'translate(' + distLeftMargin + ',' + top + ') scale(' + distFocusScale + ')')
+                .attr('transform', 'translate(' + distLeftMargin + ',' + top + ')')
+            .select('.candidate-label')
+                .text(d => d.data.Party + ' — ' + d.votes + ' votes')
+                .each('end', resolve)
+        });
     };
 
     /**
      * Split candidate's bar into separate distribution chunks
      */
     dist.splitBar = function () {
-        // CODE HERE
-        return Promise.resolve();
+        return new Promise(function (resolve) {
+            var node = chartBarGroup.datum();
+            var chunkMax = node.sourceLinks.length - 1;
+            var chunkMid = chunkMax / 2;
+
+            var data = node.sourceLinks.slice(); // Make a copy for custom sorting
+            // Reverse-sort links by candidate votes BEFORE distribution
+            data.sort(function (a, b) {
+                var aVotes = a.target.prevNode.votes;
+                var bVotes = b.target.prevNode.votes;
+                return aVotes - bVotes;
+            });
+
+            barChunks = chartBarGroup.selectAll('.candidate-bar')
+                .data(data)
+
+            barChunks.enter().append('rect')
+                .attr('class', 'candidate-bar')
+                .style('fill', node.data.colour)
+                .attr('x', 0)
+                .attr('y', 0)
+                .attr('height', chartBarHeight)
+
+            var xTotal = 0;
+            barChunks
+                .attr('width', d => d.votes * widthPerVote)
+                .attr('transform', function (d) {
+                    var x = xTotal;
+                    this.relX = x;
+                    xTotal += d.votes * widthPerVote;
+                    return 'translate(' + x + ',0)';
+                })
+
+            d3.transition()
+                .duration(animTimeSplitDist)
+                .each('end', resolve)
+                .each(function () {
+                    barChunks.transition()
+                        .attr('transform', function (d, i) {
+                            var idxDiff = i - chunkMid;
+                            this.relX += idxDiff * distSplitBarGap;
+                            return 'translate(' + snap(this.relX) + ',0)';
+                        })
+                    chartBarGroup.selectAll('.candidate-label')
+                        .transition()
+                        .style('opacity', 0)
+                        .remove()
+                })
+        });
     };
 
     /**
      * Move bar chunks onto their relevant candidates on the graph
      */
     dist.redistribute = function () {
-        // CODE HERE
-        return Promise.resolve();
+        return new Promise(function (resolve) {
+            // Reset coordinate system
+            var groupTransform = d3.transform(chartBarGroup.attr('transform'));
+            chartBarGroup.attr('transform', 'translate(0,0)')
+            barChunks.attr('transform', function (d) {
+                return 'translate(' + (this.relX + groupTransform.translate[0]) + ',' + groupTransform.translate[1] + ')'
+            })
+
+            // Start distribution animation
+            var chunkCount = barChunks.size()
+            d3.transition()
+                .duration(animTimeRetargetDist * 2)
+                .each('end', resolve)
+                .each(function () {
+                    barChunks.transition()
+                        .duration(animTimeRetargetDist)
+                        .delay((d, i) => (chunkCount - 1 - i) / chunkCount * animTimeRetargetDist)
+                        .attr('transform', function (d, i) {
+                            var prevVotes = d.target.prevNode.votes;
+                            var x = prevVotes * widthPerVote;
+                            var y = (chunkCount - 1 - i) * chartBarHeight;
+                            return 'translate(' + [x, y] + ')';
+                        })
+                })
+        });
     };
 
     /**
      * Clean up any left over elements and data
      */
     dist.remove = function () {
-        // CODE HERE
-        return Promise.resolve();
+        return new Promise(function (resolve) {
+            container.transition()
+                .style('opacity', 0)
+                .each('end', resolve)
+                .remove();
+        });
     };
 
     return dist;
@@ -372,17 +470,31 @@ var dopController = {
         this.currentRound = index;
 
         // Set up distribution of the last-placed candidate
-        // if (isNext && !isFirst) {
-        //     this.distributeLastCandidate();
-        // } else {
+        var nextFn = function () {
             this.renderRound(index);
-        // }
+        }.bind(this);
+        if (isNext && !isFirst) {
+            this.distributeLastCandidate().then(nextFn);
+        } else {
+            nextFn();
+        }
     },
 
     renderRound: function (index) {
         // Update the chart
         dop.chart.data(dop.nodeGroups[index]);
-        dop.chart.render().then(dop.chart.sortBars);
+        dop.chart.render()
+            .then(function () {
+                return new Promise(function (resolve) {
+                    if (dop.distribution) {
+                        dop.distribution.remove()
+                            .then(resolve);
+                    } else {
+                        resolve()
+                    }
+                });
+            })
+            .then(dop.chart.sortBars);
 
         // Work out what to say
         function candText(candidate) {
@@ -403,10 +515,13 @@ var dopController = {
 
     distributeLastCandidate: function () {
         var dist = dop.distribution = dop.chart.distribution();
-        // dist.on('focusBar', dist.splitBar);
-        // dist.on('splitBar', dist.redistribute);
-        // dist.on('redistribute', () => console.log('DO STUFF!'));
-        dist.focusBar();
+        return new Promise(function (resolve) {
+            dist.focusBar()
+                .then(dist.splitBar)
+                .then(pause(200))
+                .then(dist.redistribute)
+                .then(resolve);
+        });
     },
 
     describe: function (text) {
@@ -422,7 +537,7 @@ BASIC FLOW
 - SET displayOrder to candidate order on vote cards
 - Draw chart
     - Place bars in displayOrder
-        * chart.renderBars()
+        * chart.render()
     - ANIMATE sort bars by most votes to least
         * chart.sortBars()
     - SET displayOrder to current order
@@ -430,15 +545,15 @@ BASIC FLOW
         - EXIT
     - Eliminate lowest-voted candidate
         - ANIMATE pull out candidate bar and zoom to focus
-            * distribution.setBar()
-            * distribution.pullOutBar()
+            * distribution.grabCandidate()
+            * distribution.focusBar()
         - ANIMATE split bar into blocks of votes to be distributed
             * distribution.splitBar()
         - ANIMATE move blocks onto the end of other candidate bars
             * distribution.redistribute()
         - ANIMATE merge blocks into existing candidate bars
             * chart.data()
-            * chart.renderBars()
+            * chart.render()
             * distribution.remove()
         - GO TO "Draw chart"
 
@@ -465,11 +580,12 @@ d3.json('melb-flow.json', function (data) {
 
     // Build one chart per round of counting
     var margin = 20;
+    var bottomPadding = 100;
     dop.chart = dopRoundChart(dop.nodeGroups[0]).position(0, margin);
 
     // Make sure the container is big enough to fit everything
     svg.attr('width', Math.round(dop.chart.dims.x + dop.chart.dims.width + margin))
-        .attr('height', Math.round(dop.chart.dims.y + dop.chart.dims.height + margin));
+        .attr('height', Math.round(dop.chart.dims.y + dop.chart.dims.height + bottomPadding + margin));
 
     // Start the animation controller
     dopController.ready();
