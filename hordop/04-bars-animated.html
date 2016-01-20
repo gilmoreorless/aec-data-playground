@@ -341,6 +341,7 @@ var dopDistribution = function (chart) {
 
     var dist = {
         chart: chart,
+        candidate: null,
         container: null,
     };
 
@@ -357,6 +358,7 @@ var dopDistribution = function (chart) {
         var lastCandidate = chart.data().reduce(function (memo, candidate) {
             return (!memo || candidate.votes < memo.votes) ? candidate : memo;
         });
+        dist.candidate = lastCandidate;
         chartBarGroup = chart.container.selectAll('.candidate')
             .filter(d => d.candidateIndex === lastCandidate.candidateIndex)
         container.append(() => chartBarGroup.node());
@@ -548,13 +550,16 @@ var dopController = {
                 .then(resolve)
 
             // Work out what to say
-            var text = 'Round ' + (index + 1) + '. ';
-            var firstCandidate = dop.nodeGroups[index][0];
+            var text = 'Round ' + (index + 1);
+            if (index === 0) {
+                text += ' – First preferences';
+            }
+            text += '; ';
+            var firstCandidate = dop.chart.data()[0];
             if (firstCandidate.votes >= requiredVotes) {
                 text += candText(firstCandidate) + ' wins!';
             } else {
-                var lastCandidate = dop.nodeGroups[index].slice(-1)[0];
-                text += candText(lastCandidate) + ' is eliminated.';
+                text += 'no winner.';
             }
             dopController.describe(text);
         });
@@ -562,6 +567,9 @@ var dopController = {
 
     distributeLastCandidate: function () {
         var dist = dop.distribution = dop.chart.distribution();
+        // Say who's eliminated
+        dopController.describeMore(candText(dist.candidate) + ' is eliminated.');
+        // Start the animations
         return new Promise(function (resolve) {
             dist.focusBar()
                 .then(dist.splitBar)
@@ -573,38 +581,12 @@ var dopController = {
 
     describe: function (text) {
         explanation.text(text);
+    },
+
+    describeMore: function (text) {
+        explanation.text(explanation.text() + ' ' + text);
     }
 };
-
-/***
-
-BASIC FLOW
-
-- Load/process data
-- SET displayOrder to candidate order on vote cards
-- Draw chart
-    - Place bars in displayOrder
-        * chart.render()
-    - ANIMATE sort bars by most votes to least
-        * chart.sortBars()
-    - SET displayOrder to current order
-    - If a candidate has > 50%, announce them as winner
-        - EXIT
-    - Eliminate lowest-voted candidate
-        - ANIMATE pull out candidate bar and zoom to focus
-            * distribution.grabCandidate()
-            * distribution.focusBar()
-        - ANIMATE split bar into blocks of votes to be distributed
-            * distribution.splitBar()
-        - ANIMATE move blocks onto the end of other candidate bars
-            * distribution.redistribute()
-        - ANIMATE merge blocks into existing candidate bars
-            * chart.data()
-            * chart.render()
-            * distribution.remove()
-        - GO TO "Draw chart"
-
-***/
 
 
 /*** INITIAL DATA LOAD ***/
