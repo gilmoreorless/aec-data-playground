@@ -6,12 +6,6 @@
 body {
     font-family: sans-serif;
 }
-label {
-    margin-left: .5em;
-}
-label[aria-disabled="true"] {
-    opacity: .5;
-}
 
 .main-text {
     font-style: italic;
@@ -43,6 +37,9 @@ label[aria-disabled="true"] {
 <div id="controls">
     <button type="button" id="ctl-prevRound">Previous round</button>
     <button type="button" id="ctl-nextRound">Next round</button>
+    &laquo;&raquo;
+    <button type="button" id="ctl-play">Play full animation</button>
+    <button type="button" id="ctl-pause" disabled>Pause</button>
 </div>
 <p id="explanation" class="main-text" aria-live="polite"></p>
 
@@ -483,10 +480,23 @@ var dopController = {
     currentRound: -1,
     maxRound: 0,
     isAnimating: false,
+    isPlaying: false,
+
+    _updateControls: function () {
+        controls.prevRound.disabled = this.isPlaying || this.isAnimating;
+        controls.nextRound.disabled = this.isPlaying || this.isAnimating;
+        controls.play.disabled = this.isPlaying;
+        controls.pause.disabled = !this.isPlaying;
+    },
 
     setAnimating: function (isAnimating) {
         this.isAnimating = isAnimating;
-        controls.forEach(btn => btn.disabled = isAnimating);
+        this._updateControls();
+    },
+
+    setPlaying: function (isPlaying) {
+        this.isPlaying = isPlaying;
+        this._updateControls();
     },
 
     ready: function () {
@@ -494,6 +504,19 @@ var dopController = {
         dopController.renderRound(0, true).then(function () {
             dopController.showRound(0);
         });
+    },
+
+    play: function () {
+        this.setPlaying(true);
+        if (this.currentRound === this.maxRound) {
+            this.showRound(0);
+        } else {
+            this.nextRound();
+        }
+    },
+
+    pause: function () {
+        this.setPlaying(false);
     },
 
     nextRound: function () {
@@ -508,6 +531,9 @@ var dopController = {
         // Clamp index to [0, rounds] bounds
         index = Math.max(0, Math.min(this.maxRound, index));
         if (this.isAnimating || index === this.currentRound) {
+            if (this.isPlaying && index === this.currentRound) {
+                this.setPlaying(false);
+            }
             return;
         }
         var isFirst = this.currentRound === -1;
@@ -516,8 +542,14 @@ var dopController = {
 
         // Set up distribution of the last-placed candidate
         var nextFn = function () {
-            this.renderRound(index);
-        }.bind(this);
+            dopController.renderRound(index)
+                .then(function () {
+                    if (dopController.isPlaying) {
+                        dopController.nextRound();
+                    }
+                });
+        };
+
         this.setAnimating(true);
         if (isNext && !isFirst) {
             this.distributeLastCandidate().then(nextFn);
@@ -543,11 +575,11 @@ var dopController = {
                         }
                     });
                 })
+                .then(dop.chart.sortBars)
                 .then(function () {
-                    dop.chart.sortBars();
                     dopController.setAnimating(false);
+                    resolve();
                 })
-                .then(resolve)
 
             // Work out what to say
             var text = 'Round ' + (index + 1);
