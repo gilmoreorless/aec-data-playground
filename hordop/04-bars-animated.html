@@ -64,7 +64,7 @@ var distFocusScale = 2;
 var distSplitBarGap = 5;
 
 var animTimeSizeBars = 800;
-var animTimeSortBars = 500;
+var animTimeSortBars = 600;
 var animTimeFocusDist = 800;
 var animTimeSplitDist = 400;
 var animTimeRetargetDist = 400;
@@ -165,7 +165,8 @@ function candText(candidate) {
 
 var dopRoundChart = function (nodes) {
     // Calculated values
-    var halfway = 0, totalHeight = 0;
+    var totalHeight = 0;
+    var halfway = snap(widthPerVote * requiredVotes);
     // D3 selections
     var container, boundingBorder, halfwayLine, candidateContainers, candidateBars, candidateLabels;
 
@@ -207,7 +208,6 @@ var dopRoundChart = function (nodes) {
         }
         chart.nodes = data;
         // Calculate derived values from data
-        halfway = snap(widthPerVote * requiredVotes);
         totalHeight = chartBarHeight * data.length;
         chart.maxVotes = d3.max(data, d => d.votes);
         chart.dims.height = totalHeight;
@@ -277,8 +277,9 @@ var dopRoundChart = function (nodes) {
         return transitionPromise(animTimeSizeBars, function () {
             candidateBars.transition()
                 .attr('width', d => snap(widthPerVote * d.votes))
-            candidateLabels.transition()
+            candidateLabels
                 .text(d => d.data.Party + ' ' + d.votePercentage.toFixed(2) + '%')
+            .transition()
                 .attr('x', function (d) {
                     // If the text doesn't fit, put it outside the bar
                     var textSize = this.getComputedTextLength();
@@ -340,7 +341,6 @@ var dopDistribution = function (chart) {
 
     var dist = {
         chart: chart,
-        data: null,
         container: null,
     };
 
@@ -354,9 +354,11 @@ var dopDistribution = function (chart) {
      * @return {dopDistribution}
      */
     dist.grabCandidate = function (index) {
-        dist.data = chart.data()[index];
+        var lastCandidate = chart.data().reduce(function (memo, candidate) {
+            return (!memo || candidate.votes < memo.votes) ? candidate : memo;
+        });
         chartBarGroup = chart.container.selectAll('.candidate')
-            .filter((d, i) => i === index)
+            .filter(d => d.candidateIndex === lastCandidate.candidateIndex)
         container.append(() => chartBarGroup.node());
         return dist;
     };
@@ -486,7 +488,10 @@ var dopController = {
     },
 
     ready: function () {
-        this.showRound(0);
+        dopController.setAnimating(true);
+        dopController.renderRound(0, true).then(function () {
+            dopController.showRound(0);
+        });
     },
 
     nextRound: function () {
@@ -519,36 +524,40 @@ var dopController = {
         }
     },
 
-    renderRound: function (index) {
-        // Update the chart
-        dop.chart.data(dop.nodeGroups[index]);
-        dop.chart.render()
-            .then(function () {
-                return new Promise(function (resolve) {
-                    if (dop.distribution) {
-                        dop.distribution.remove()
-                            .then(resolve);
-                    } else {
-                        resolve()
-                    }
-                });
-            })
-            // .then(dop.chart.sortBars);
-            .then(function () {
-                dop.chart.sortBars();
-                dopController.setAnimating(false);
-            })
+    renderRound: function (index, isFirstRender) {
+        return new Promise(function (resolve) {
+            // Update the chart
+            if (!isFirstRender) {
+                dop.chart.data(dop.nodeGroups[index]);
+            }
+            dop.chart.render()
+                .then(function () {
+                    return new Promise(function (resolve) {
+                        if (dop.distribution) {
+                            dop.distribution.remove()
+                                .then(resolve);
+                        } else {
+                            resolve()
+                        }
+                    });
+                })
+                .then(function () {
+                    dop.chart.sortBars();
+                    dopController.setAnimating(false);
+                })
+                .then(resolve)
 
-        // Work out what to say
-        var text = 'Round ' + (index + 1) + '. ';
-        var firstCandidate = dop.nodeGroups[index][0];
-        if (firstCandidate.votes >= requiredVotes) {
-            text += candText(firstCandidate) + ' wins!';
-        } else {
-            var lastCandidate = dop.nodeGroups[index].slice(-1)[0];
-            text += candText(lastCandidate) + ' is eliminated.';
-        }
-        this.describe(text);
+            // Work out what to say
+            var text = 'Round ' + (index + 1) + '. ';
+            var firstCandidate = dop.nodeGroups[index][0];
+            if (firstCandidate.votes >= requiredVotes) {
+                text += candText(firstCandidate) + ' wins!';
+            } else {
+                var lastCandidate = dop.nodeGroups[index].slice(-1)[0];
+                text += candText(lastCandidate) + ' is eliminated.';
+            }
+            dopController.describe(text);
+        });
     },
 
     distributeLastCandidate: function () {
@@ -574,9 +583,9 @@ BASIC FLOW
 - Load/process data
 - SET displayOrder to candidate order on vote cards
 - Draw chart
-    ! Place bars in displayOrder
+    - Place bars in displayOrder
         * chart.render()
-    ! ANIMATE sort bars by most votes to least
+    - ANIMATE sort bars by most votes to least
         * chart.sortBars()
     - SET displayOrder to current order
     - If a candidate has > 50%, announce them as winner
@@ -616,10 +625,16 @@ d3.json('melb-flow.json', function (data) {
         });
     });
 
-    // Build one chart per round of counting
+    // Make a copy of first prefs data for initial display, sorted by voting card order
+    var firstPrefs = dop.nodeGroups[0].slice();
+    firstPrefs.sort(function (a, b) {
+        return a.candidateIndex - b.candidateIndex;
+    });
+
+    // Create the main chart
     var margin = 20;
-    var bottomPadding = 100;
-    dop.chart = dopRoundChart(dop.nodeGroups[0]).position(0, margin);
+    var bottomPadding = 70;
+    dop.chart = dopRoundChart(firstPrefs).position(0, margin);
 
     // Make sure the container is big enough to fit everything
     svg.attr('width', Math.round(dop.chart.dims.x + dop.chart.dims.width + margin))
