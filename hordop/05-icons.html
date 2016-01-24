@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<meta charset="utf8">
+<title>Icons / mini summaries</title>
+<style>
+
+body {
+    font-family: sans-serif;
+}
+
+#examples {
+    display: flex;
+}
+#examples > * {
+    margin: 2em;
+}
+
+</style>
+<body>
+<h2>Seat of Melbourne, 2010</h2>
+<div id="examples"></div>
+
+<script src="../d3.js"></script>
+<script src="dop-utils.js"></script>
+<script>
+
+/*** CONFIG ***/
+
+
+/*** SETUP ***/
+
+// Root object
+var dop = {};
+// Base drawing container
+var mainContainer = d3.select('#examples');
+
+
+/*** UTILITIES ***/
+
+var snap = dopUtils.snap;
+
+function makeSvg() {
+    var svg = mainContainer.append('svg');
+    return svg;
+}
+
+var actions = [];
+function register(action) {
+    actions.push(action);
+}
+
+
+/*** EXPLORATIONS ***/
+
+/**
+ * Small solid block with one row per counting round
+ */
+register(function (svg) {
+    var width = 60;
+    var heightPerRow = 10;
+
+    var widthPerVote = width / dop.totalVotes;
+    var height = heightPerRow * dop.nodeGroups.length;
+    svg.attr('width', width).attr('height', height);
+
+    var rows = svg.selectAll('.round')
+        .data(dop.nodeGroups)
+    .enter().append('g')
+        .attr('class', 'round')
+        .attr('transform', (d, i) => 'translate(0,' + (heightPerRow * i) + ')')
+
+    rows.selectAll('.candidate')
+        .data(d => d)
+    .enter().append('rect')
+        .attr({
+            'class': 'candidate',
+            x: d => d.groupAggregateVotes * widthPerVote,
+            y: 0,
+            width: d => d.votes * widthPerVote,
+            height: heightPerRow,
+        })
+        .style({
+            stroke: 'none',
+            fill: d => d.data.colour,
+        })
+});
+
+/**
+ * Simple lines
+ */
+function drawSimpleLines(svg, xOffsetPerRow) {
+    var lineWidth = 3;
+    var lineGap = 7;
+    var heightPerRow = 12;
+
+    var candidatesCount = dop.nodeGroups[0].length;
+    var width = lineGap * (candidatesCount - 0);
+    var height = heightPerRow * dop.nodeGroups.length;
+    svg.attr('width', width).attr('height', height);
+
+    var line = d3.svg.line()
+        .interpolate('basis')
+
+    var positions = dop.nodeGroups.map(function (group) {
+        var map = d3.map();
+        group.forEach(function (node, i) {
+            map.set(node.candidateIndex, i);
+        });
+        return map;
+    });
+
+    var getX = function (row, id) {
+        var xIndex = positions[row].get(id) || 0;
+        var xPos = xIndex * lineGap + (lineWidth / 2);
+        var xOffset = xOffsetPerRow * row * lineGap;
+        return xPos + xOffset;
+    }
+
+    var lineData = [];
+    dop.nodeGroups.forEach(function (group, row) {
+        group.slice().reverse().forEach(function (node, i) {
+            var origin = [
+                getX(row, node.candidateIndex),
+                row * heightPerRow
+            ];
+            node.sourceLinks.forEach(function (link, li) {
+                var coords = [origin];
+                coords.push([
+                    getX(row + 1, link.target.candidateIndex),
+                    (row + 1) * heightPerRow
+                ]);
+                coords.data = node.data;
+                if (link.target.candidateIndex === node.candidateIndex) {
+                    coords.same = true;
+                }
+                lineData.push(coords);
+            });
+        });
+    });
+
+    svg.selectAll('.flow')
+        .data(lineData)
+    .enter().append('path')
+        .attr({
+            'class': 'flow',
+            d: line
+        })
+        .style({
+            stroke: d => d.data.colour,
+            'stroke-width': d => d.same ? lineWidth : lineWidth / 2,
+        })
+}
+
+// Left-aligned
+register(function (svg) {
+    drawSimpleLines(svg, 0);
+});
+// Centre-aligned
+register(function (svg) {
+    drawSimpleLines(svg, 0.5);
+});
+
+
+/*** INITIAL DATA LOAD ***/
+
+d3.json('melb-flow.json', function (data) {
+    dop = dopUtils.buildNodesAndLinks(data);
+
+    dop.nodeGroups.forEach(function (group) {
+        var aggregate = 0;
+        group.forEach(function (node) {
+            node.groupAggregateVotes = aggregate;
+            aggregate += node.votes;
+        });
+    });
+
+    actions.forEach(function (action) {
+        action(makeSvg());
+    });
+});
+</script>
