@@ -9,6 +9,7 @@ body {
 
 #examples {
     display: flex;
+    flex-wrap: wrap;
 }
 #examples > * {
     margin: 2em;
@@ -157,6 +158,151 @@ register(function (svg) {
 // Centre-aligned
 register(function (svg) {
     drawSimpleLines(svg, 0.5);
+});
+
+/**
+ * Simple TCP percentage indicator next to text
+ */
+register(function (svg) {
+    var barWidth = 10;
+    var height = 26;
+    var textPadding = 4;
+    var fontSize = 20;
+
+    var barData = dop.nodeGroups[dop.nodeGroups.length - 1];
+    var heightPerVote = height / dop.totalVotes;
+    var widthPerVote = barWidth / d3.max(barData, d => d.votes);
+    var textWidth;
+
+    function render(top, barType) {
+        var group = svg.append('g');
+
+        // Draw bars
+        group.selectAll('.bar')
+            .data(barData)
+        .enter().append('rect')
+            .attr({
+                'class': 'bar',
+                x: 0,
+                y: function (d, i) {
+                    if (barType === 'proportionalWidth') {
+                        return top + i * (height / 2);
+                    }
+                    return top + d.groupAggregateVotes * heightPerVote;
+                },
+                width: function (d) {
+                    if (barType === 'proportionalWidth') {
+                        return d.votes * widthPerVote;
+                    }
+                    return barWidth;
+                },
+                height: function (d) {
+                    if (barType === 'proportionalWidth') {
+                        return height / 2;
+                    }
+                    return d.votes * heightPerVote;
+                }
+            })
+            .style({
+                stroke: 'none',
+                fill: d => d.data.colour,
+            })
+
+        // Write text
+        var text = group.append('text')
+            .attr({
+                x: barWidth + textPadding,
+                y: top + height / 2,
+                dy: '.35em',
+            })
+            .style('font-size', fontSize)
+            .text('Melbourne')
+
+        textWidth = text.node().getComputedTextLength();
+    }
+
+    render(0, 'fullWidth');
+    render(height * 2, 'proportionalWidth');
+
+    svg.attr('height', height * 3).attr('width', barWidth + Math.ceil(textWidth) + textPadding * 2);
+});
+
+/**
+ * Generic colour strength to indicate margin (samples only, not real data)
+ */
+register(function (svg) {
+    var barWidth = 6;
+    var height = 27;
+    var textPadding = 4;
+    var fontSize = 18;
+    var colourVariations = 5;
+
+    var totalHeight = 0;
+    var totalWidth = 0;
+    var nodes = dop.nodeGroups[0];
+    var parties = ['ALP', 'LP', 'GRN'];
+    var data = nodes.filter(node => parties.includes(node.data.Party))
+        .map(node => ({name: node.data.Party, colour: node.data.colour}));
+
+    var groups = svg.selectAll('.party')
+        .data(data)
+    .enter().append('g')
+
+    var percScale = d3.scale.linear()
+        .domain([0, colourVariations])
+        .range([50, 100])
+
+    var lightScale = d3.scale.linear()
+        .domain([0, colourVariations])
+        .range([.9, .4])
+
+    var rows = groups.selectAll('.variation')
+        .data(function (d, i) {
+            var variations = [];
+            var baseColour = d3.hsl(d.colour);
+            var percentage, colour;
+
+            for (var j = 0; j < colourVariations; j++) {
+                percentage = percScale(j);
+                colour = d3.hsl(baseColour.h, baseColour.s, lightScale(j));
+                variations.push({
+                    idx: i * colourVariations + j,
+                    name: d.name,
+                    percentage: percentage,
+                    colour: colour
+                });
+            }
+            return variations;
+        })
+    .enter().append('g')
+        .attr('transform', d => 'translate(0,' + (d.idx * height) + ')');
+
+    rows.append('rect')
+        .attr({
+            x: 0,
+            y: 0,
+            width: barWidth,
+            height: height
+        })
+        .style('fill', d => d.colour)
+
+    var text = rows.append('text')
+        .attr({
+            x: barWidth + textPadding,
+            y: d => height / 2,
+            dy: '.35em',
+        })
+        .style('font-size', fontSize)
+        .text(d => d.name + ' ' + d.percentage + '%')
+
+    var textWidths = [];
+    text.each(function () {
+        textWidths.push(this.getComputedTextLength());
+    });
+    var maxTextWidth = d3.max(textWidths);
+    totalWidth = barWidth + Math.ceil(maxTextWidth) + textPadding * 2;
+    totalHeight = height * parties.length * colourVariations;
+    svg.attr('height', totalHeight).attr('width', totalWidth);
 });
 
 
